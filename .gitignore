@@ -1,0 +1,12 @@
+# Config cá nhân liên quan đến kết nối database
+config.ini
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+venv/
+.venv/
+config.cfg
