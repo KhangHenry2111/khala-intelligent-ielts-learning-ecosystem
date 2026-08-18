@@ -105,6 +105,16 @@ def _build_engine_url(odbc_connection_string: str) -> str:
     Wrap a raw ODBC connection string (DRIVER=...;SERVER=...;...) into
     a SQLAlchemy engine URL using the mssql+pyodbc dialect.
     """
+    if "driver=" not in odbc_connection_string.lower():
+        odbc_connection_string = "Driver={ODBC Driver 17 for SQL Server};" + odbc_connection_string
+    
+    # Map ADO.NET values to ODBC Driver values
+    odbc_connection_string = odbc_connection_string.replace("Data Source=", "Server=")
+    odbc_connection_string = odbc_connection_string.replace("Encrypt=False", "Encrypt=no")
+    odbc_connection_string = odbc_connection_string.replace("Encrypt=True", "Encrypt=yes")
+    odbc_connection_string = odbc_connection_string.replace("TrustServerCertificate=False", "TrustServerCertificate=no")
+    odbc_connection_string = odbc_connection_string.replace("TrustServerCertificate=True", "TrustServerCertificate=yes")
+
     quoted = quote_plus(odbc_connection_string)
     return f"mssql+pyodbc:///?odbc_connect={quoted}"
 
@@ -213,6 +223,16 @@ class TestSqlScripts(unittest.TestCase):
 
             print(failure_message)
             self.fail(failure_message)
+
+    def test_query_all_users(self):
+        """Test querying all records from the [User] table."""
+        try:
+            result = self.connection.execute(text("SELECT * FROM [User]"))
+            rows = result.fetchall()
+            print(f"Successfully queried [User] table. Found {len(rows)} records.")
+            self.assertIsNotNone(rows)
+        except Exception as exc:
+            self.fail(f"Querying [User] table failed: {exc}")
 
 
 if __name__ == "__main__":

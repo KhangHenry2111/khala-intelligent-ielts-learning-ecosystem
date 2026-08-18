@@ -8,4 +8,14 @@ public interface IAuthService
     /// Authenticate against configured user store. Returns a UserInfo when successful, null otherwise.
     /// </summary>
     UserInfo? Authenticate(string username, string password, string userType);
+    
+    /// <summary>
+    /// Print all user information to console
+    /// </summary>
+    void PrintUserInfo(UserInfo user);
+
+    /// <summary>
+    /// Registers a new user or teacher. Returns true if successful, false otherwise with an error message.
+    /// </summary>
+    bool RegisterUser(RegisterRequest req, out string errorMessage);
 }

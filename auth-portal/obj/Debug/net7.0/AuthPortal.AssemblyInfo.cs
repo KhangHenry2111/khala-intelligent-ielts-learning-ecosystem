@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("AuthPortal")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+40509650bc5f589b90de8b8290baab21d7aedcc8")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+60b2439ef1f97b5e0e3604b18fc1329d153b336e")]
 [assembly: System.Reflection.AssemblyProductAttribute("AuthPortal")]
 [assembly: System.Reflection.AssemblyTitleAttribute("AuthPortal")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

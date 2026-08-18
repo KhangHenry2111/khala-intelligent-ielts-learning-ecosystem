@@ -9,4 +9,4 @@ __pycache__/
 *.pyd
 venv/
 .venv/
-config.cfg
+config.cfg  
