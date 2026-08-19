@@ -110,46 +110,74 @@ function logout() {
   loadComponent(document.querySelector('.tab.active')?.dataset.type || 'Admin');
 }
 
-async function loadComponent(type){
-  const url = `/components/${type.toLowerCase()}-login.html`;
+async function loadComponent(type, mode = 'login'){
+  const url = `/components/${type.toLowerCase()}-${mode}.html?v=2`;
   const res = await fetch(url);
   const html = await res.text();
   componentRoot.innerHTML = html;
 
   const form = componentRoot.querySelector('form');
+  if (!form) {
+    showMessage('Không thể tải giao diện xác thực', 'error');
+    return;
+  }
+
+  componentRoot.querySelector('[data-action="register"]')?.addEventListener('click', () => {
+    loadComponent(type, 'register');
+  });
+  componentRoot.querySelector('[data-action="login"]')?.addEventListener('click', () => {
+    loadComponent(type, 'login');
+  });
+
   form.addEventListener('submit', async (ev) => {
     ev.preventDefault();
     const fd = new FormData(form);
-    const payload = {
-      username: fd.get('username') || '',
-      password: fd.get('password') || '',
-      userType: form.dataset.usertype || type,
-    };
+    const isRegister = form.dataset.form === 'register';
+    const payload = Object.fromEntries(fd.entries());
+    delete payload.confirmPassword;
+    payload.userType = form.dataset.usertype || type;
+
+    if (isRegister && payload.ieltsBand !== undefined) {
+      payload.ieltsBand = Number(payload.ieltsBand);
+      payload.experienceYears = Number(payload.experienceYears);
+    }
+
+    if (isRegister && fd.get('password') !== fd.get('confirmPassword')) {
+      showMessage('Mật khẩu xác nhận không khớp', 'error');
+      return;
+    }
 
     const submitBtn = form.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     submitBtn.textContent = 'Đang xử lý...';
 
     try{
-      const r = await fetch('/api/auth/login', {
-        method: 'POST', headers: {'Content-Type':'application/json'},
+      const r = await fetch(`/api/auth/${isRegister ? 'register' : 'login'}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(isRegister ? {'X-Frontend-Client': 'auth-portal'} : {}),
+        },
         body: JSON.stringify(payload)
       });
 
       const data = await r.json().catch(()=>({}));
-      if(r.ok){
+      if(r.ok && !isRegister){
         const u = data.user || {};
         componentRoot.innerHTML = renderUserProfile(u);
         showMessage('✅ Đăng nhập thành công!', 'success');
+      } else if (r.ok) {
+        await loadComponent(type, 'login');
+        showMessage('✅ Đăng ký thành công! Bạn có thể đăng nhập.', 'success');
       } else {
         showMessage(data.message || 'Đăng nhập thất bại', 'error');
         submitBtn.disabled = false;
-        submitBtn.textContent = `Sign in as ${type}`;
+        submitBtn.textContent = isRegister ? `Create ${type} Account` : `Sign in as ${type}`;
       }
     }catch(err){
       showMessage('Lỗi kết nối mạng', 'error');
       submitBtn.disabled = false;
-      submitBtn.textContent = `Sign in as ${type}`;
+      submitBtn.textContent = isRegister ? `Create ${type} Account` : `Sign in as ${type}`;
     }
   });
 }
@@ -168,4 +196,4 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 // initial load
-loadComponent('Admin');
+loadComponent(document.querySelector('.tab.active')?.dataset.type || 'Student');

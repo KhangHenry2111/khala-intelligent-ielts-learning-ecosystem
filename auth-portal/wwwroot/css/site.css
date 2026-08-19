@@ -150,6 +150,80 @@ h1 {
   cursor: not-allowed;
 }
 
+.auth-form {
+  animation: fadeSlideIn 0.35s ease;
+}
+
+.form-hint {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin: -8px 0 18px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+
+.form-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.auth-form textarea {
+  width: 100%;
+  padding: 10px 14px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.9rem;
+  outline: none;
+  resize: vertical;
+}
+
+.auth-form textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.auth-switch {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.register-button,
+.text-button {
+  width: auto !important;
+  margin: 8px auto 0 !important;
+  padding: 8px 14px !important;
+  display: block;
+  background: transparent !important;
+  border: 1px solid var(--accent) !important;
+  border-radius: 8px;
+  color: var(--accent-hover) !important;
+  box-shadow: none !important;
+  font-size: 0.85rem !important;
+  font-weight: 600 !important;
+}
+
+.register-button:hover:not(:disabled),
+.text-button:hover:not(:disabled) {
+  background: var(--accent-glow) !important;
+  text-decoration: none;
+  transform: none !important;
+}
+
+.text-button {
+  background: transparent !important;
+}
+
 /* ── Message ── */
 .message {
   margin-top: 14px;
@@ -343,8 +417,30 @@ h1 {
 }
 
 /* ── Responsive ── */
-@media (max-width: 560px) {
-  .container { padding: 16px; }
+@media (max-width: 560px), (max-height: 500px) {
+  body { padding-top: 2px; }
+  .container { padding: 4px 16px; }
+  h1 { margin-bottom: 6px; font-size: 1.3rem; }
+  .tabs { margin-bottom: 6px; }
+  .tab { padding: 7px 10px; }
+  .login-form { padding: 10px 20px; }
+  .login-form h2 { margin-bottom: 10px; }
+  .login-form label { margin-bottom: 5px; }
+  .login-form input { padding: 5px 12px; margin-top: 3px; }
+  .login-form button[type="submit"] { margin-top: 5px; padding: 8px; }
+  .auth-switch {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 10;
+    margin: 0;
+    padding: 7px 16px 9px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  .register-button { margin-top: 3px !important; padding: 5px 10px !important; }
   .profile-card { padding: 20px 16px; }
   .detail-label, .detail-value { padding: 8px 10px; }
+  .form-grid, .form-grid-three { grid-template-columns: 1fr; }
 }

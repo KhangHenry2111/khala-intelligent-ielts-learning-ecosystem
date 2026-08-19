@@ -1,0 +1,27 @@
+<form class="auth-form register-form" data-usertype="Instructor" data-form="register">
+  <h2>Instructor Registration</h2>
+  <p class="form-hint">Submit your teaching profile for verification.</p>
+  <div class="form-grid">
+    <label>Full name<input name="fullName" autocomplete="name" required /></label>
+    <label>Phone number<input name="phoneNumber" type="tel" autocomplete="tel" required /></label>
+  </div>
+  <label>Email<input name="email" type="email" autocomplete="email" required /></label>
+  <label>Username<input name="username" autocomplete="username" required /></label>
+  <div class="form-grid">
+    <label>Password<input name="password" type="password" autocomplete="new-password" minlength="6" required /></label>
+    <label>Confirm password<input name="confirmPassword" type="password" autocomplete="new-password" minlength="6" required /></label>
+  </div>
+  <label>Avatar URL<input name="avatar" type="url" placeholder="https://..." required /></label>
+  <label>Biography<textarea name="biography" rows="3" required></textarea></label>
+  <div class="form-grid">
+    <label>Qualification<input name="qualification" required /></label>
+    <label>Qualification file URL<input name="qualificationFileURL" type="url" placeholder="https://..." required /></label>
+  </div>
+  <div class="form-grid form-grid-three">
+    <label>IELTS band<input name="ieltsBand" type="number" min="0" max="9" step="0.5" required /></label>
+    <label>Experience (years)<input name="experienceYears" type="number" min="0" step="1" required /></label>
+    <label>Specialization<input name="specialization" required /></label>
+  </div>
+  <button type="submit">Create Instructor Account</button>
+  <button type="button" class="text-button" data-action="login">Already have an account? Sign in</button>
+</form>

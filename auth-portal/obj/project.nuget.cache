@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "IpCnYLvfJms=",
+  "dgSpecHash": "gi2vostKCLU=",
   "success": true,
-  "projectFilePath": "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
+  "projectFilePath": "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Admin\\.nuget\\packages\\microsoft.netcore.platforms\\3.1.0\\microsoft.netcore.platforms.3.1.0.nupkg.sha512",
     "C:\\Users\\Admin\\.nuget\\packages\\microsoft.win32.registry\\4.7.0\\microsoft.win32.registry.4.7.0.nupkg.sha512",

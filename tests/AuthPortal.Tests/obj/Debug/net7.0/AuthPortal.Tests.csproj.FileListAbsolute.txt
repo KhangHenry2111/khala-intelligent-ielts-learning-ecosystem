@@ -146,3 +146,5 @@ D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\obj\Debug\net7.0\refint
 D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\obj\Debug\net7.0\AuthPortal.Tests.pdb
 D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\obj\Debug\net7.0\AuthPortal.Tests.genruntimeconfig.cache
 D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\obj\Debug\net7.0\ref\AuthPortal.Tests.dll
+D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\bin\Debug\net7.0\appsettings.json
+D:\IeltsApp\ielts-study-assistant\tests\AuthPortal.Tests\bin\Debug\net7.0\System.Data.SqlClient.dll
