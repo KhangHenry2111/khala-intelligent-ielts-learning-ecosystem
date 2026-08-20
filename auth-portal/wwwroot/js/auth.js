@@ -1,5 +1,8 @@
 const componentRoot = document.getElementById('component-root');
 const messageEl = document.getElementById('message');
+let transitionId = 0;
+let activeController = null;
+let signedInUser = null;
 
 // Friendly Vietnamese labels for known database columns
 const FIELD_LABELS = {
@@ -100,21 +103,84 @@ function renderUserProfile(user) {
           <tbody>${rows}</tbody>
         </table>
       </div>
+      ${String(user.userType).toLowerCase() === 'student' ? '<button class="text-button" type="button" data-dashboard-action="back">← Back to dashboard</button>' : ''}
       <button class="btn-logout" onclick="logout()">🔓 Đăng xuất</button>
     </div>`;
 }
 
+function renderStudentDashboard(user) {
+  const name = escapeHtml(user.fullName || user.username || 'Student');
+  const initial = escapeHtml((user.fullName || user.username || '?')[0].toUpperCase());
+  return `
+    <section class="student-dashboard" aria-label="Student dashboard">
+      <header class="dashboard-header">
+        <div>
+          <p class="eyebrow">Student workspace</p>
+          <h2>Good to see you, ${name}.</h2>
+          <p class="dashboard-lede">A small step today makes your target band feel closer.</p>
+        </div>
+        <div class="dashboard-actions">
+          <button class="icon-button" type="button" data-dashboard-action="profile" title="View profile" aria-label="View profile">${initial}</button>
+          <button class="btn-logout" type="button" data-dashboard-action="logout">Log out</button>
+        </div>
+      </header>
+      <div class="progress-strip">
+        <div><span class="progress-label">Your learning streak</span><strong>Keep it going</strong></div>
+        <div class="progress-track"><span style="width: 42%"></span></div>
+        <span class="progress-note">Build a daily habit</span>
+      </div>
+      <div class="option-grid">
+        <button class="option-card option-primary" type="button" data-dashboard-action="study">
+          <span class="option-icon">↗</span><span><small>Practice today</small><strong>Study</strong><em>Build skills with focused lessons.</em></span><span class="card-arrow">→</span>
+        </button>
+        <button class="option-card" type="button" data-dashboard-action="level-test">
+          <span class="option-icon">◉</span><span><small>Find your starting point</small><strong>Test your level</strong><em>See where your English stands.</em></span><span class="card-arrow">→</span>
+        </button>
+        <button class="option-card" type="button" data-dashboard-action="documents">
+          <span class="option-icon">▤</span><span><small>Keep everything close</small><strong>Your documents</strong><em>Review saved learning materials.</em></span><span class="card-arrow">→</span>
+        </button>
+        <button class="option-card" type="button" data-dashboard-action="classes">
+          <span class="option-icon">⌂</span><span><small>Learn together</small><strong>Your class</strong><em>Meet your lessons and classmates.</em></span><span class="card-arrow">→</span>
+        </button>
+        <button class="option-card" type="button" data-dashboard-action="payment">
+          <span class="option-icon">$</span><span><small>Manage your plan</small><strong>Payment</strong><em>View your package and billing.</em></span><span class="card-arrow">→</span>
+        </button>
+        <button class="option-card" type="button" data-dashboard-action="support">
+          <span class="option-icon">?</span><span><small>We are here to help</small><strong>Support</strong><em>Get answers when you need them.</em></span><span class="card-arrow">→</span>
+        </button>
+      </div>
+      <div class="dashboard-toast" id="dashboard-toast" role="status" aria-live="polite"></div>
+    </section>`;
+}
+
+function escapeHtml(value) {
+  return String(value).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
+}
+
 function logout() {
+  signedInUser = null;
   messageEl.textContent = '';
   messageEl.className = 'message';
   loadComponent(document.querySelector('.tab.active')?.dataset.type || 'Admin');
 }
 
 async function loadComponent(type, mode = 'login'){
+  const requestId = ++transitionId;
+  activeController?.abort();
+  const controller = new AbortController();
+  activeController = controller;
   const url = `/components/${type.toLowerCase()}-${mode}.html?v=2`;
-  const res = await fetch(url);
-  const html = await res.text();
-  componentRoot.innerHTML = html;
+  let res;
+  try {
+    res = await fetch(url, { signal: controller.signal });
+    const html = await res.text();
+    if (requestId !== transitionId) return;
+    componentRoot.innerHTML = html;
+  } catch (err) {
+    if (err.name === 'AbortError' || requestId !== transitionId) return;
+    showMessage('Không thể tải giao diện. Vui lòng thử lại.', 'error');
+    return;
+  }
 
   const form = componentRoot.querySelector('form');
   if (!form) {
@@ -162,12 +228,17 @@ async function loadComponent(type, mode = 'login'){
       });
 
       const data = await r.json().catch(()=>({}));
+      if (requestId !== transitionId) return;
       if(r.ok && !isRegister){
         const u = data.user || {};
-        componentRoot.innerHTML = renderUserProfile(u);
-        showMessage('✅ Đăng nhập thành công!', 'success');
+        signedInUser = u;
+        componentRoot.innerHTML = type.toLowerCase() === 'student' ? renderStudentDashboard(u) : renderUserProfile(u);
+        messageEl.textContent = '';
+        messageEl.className = 'message';
+        bindDashboardActions();
       } else if (r.ok) {
         await loadComponent(type, 'login');
+        if (requestId !== transitionId) return;
         showMessage('✅ Đăng ký thành công! Bạn có thể đăng nhập.', 'success');
       } else {
         showMessage(data.message || 'Đăng nhập thất bại', 'error');
@@ -175,10 +246,30 @@ async function loadComponent(type, mode = 'login'){
         submitBtn.textContent = isRegister ? `Create ${type} Account` : `Sign in as ${type}`;
       }
     }catch(err){
+      if (requestId !== transitionId) return;
       showMessage('Lỗi kết nối mạng', 'error');
       submitBtn.disabled = false;
       submitBtn.textContent = isRegister ? `Create ${type} Account` : `Sign in as ${type}`;
     }
+  });
+}
+
+function bindDashboardActions() {
+  componentRoot.querySelectorAll('[data-dashboard-action]').forEach(button => {
+    button.addEventListener('click', () => {
+      const action = button.dataset.dashboardAction;
+      if (action === 'logout') { logout(); return; }
+      if (action === 'profile') {
+        componentRoot.innerHTML = renderUserProfile(signedInUser || {});
+        componentRoot.querySelector('[data-dashboard-action="back"]')?.addEventListener('click', () => {
+          componentRoot.innerHTML = renderStudentDashboard(signedInUser || {});
+          bindDashboardActions();
+        });
+        return;
+      }
+      const toast = componentRoot.querySelector('#dashboard-toast');
+      if (toast) toast.textContent = `${button.querySelector('strong')?.textContent || 'Tính năng'} đang được chuẩn bị cho bạn.`;
+    });
   });
 }
 
