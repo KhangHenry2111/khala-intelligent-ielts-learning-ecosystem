@@ -10,3 +10,8 @@ __pycache__/
 venv/
 .venv/
 config.cfg  
+
+# .NET and frontend build output
+**/bin/
+**/obj/
+auth-portal/ClientApp/node_modules/

@@ -42,3 +42,5 @@ D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\runtimes\unix\lib
 D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\runtimes\win\lib\netcoreapp2.1\System.Data.SqlClient.dll
 D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\runtimes\win\lib\net7.0\System.Drawing.Common.dll
 D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\runtimes\win\lib\net7.0\System.Windows.Extensions.dll
+D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\ClientApp\package.json
+D:\IeltsApp\ielts-study-assistant\auth-portal\bin\Debug\net7.0\ClientApp\package-lock.json
