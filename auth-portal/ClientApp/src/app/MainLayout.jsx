@@ -1,9 +1,10 @@
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
 export function MainLayout({ children }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const role = user?.userType?.toLowerCase() || 'user';
 
   const menuItems = {
@@ -45,9 +46,14 @@ export function MainLayout({ children }) {
         </div>
         <nav className="sidebar-nav">
           {currentMenu.map((item, idx) => (
-            <Link key={idx} to={item.path} className="nav-item">
+            <NavLink
+              key={idx}
+              to={item.path}
+              end
+              className={() => `nav-item ${location.pathname === item.path ? 'active' : ''}`}
+            >
               {item.name}
-            </Link>
+            </NavLink>
           ))}
         </nav>
         <div className="sidebar-footer">

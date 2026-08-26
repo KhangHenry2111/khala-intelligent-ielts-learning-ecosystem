@@ -2,12 +2,26 @@ import { useAuth } from '../../app/AuthContext';
 
 export function AdminDashboard() {
   const { user } = useAuth();
+  const name = user?.fullName || user?.username || 'Admin';
 
   return (
     <div className="dashboard-container">
       <div className="dashboard-welcome glass-card">
-        <h1>Admin Control Panel</h1>
-        <p>System overview and management.</p>
+        <div>
+          <span className="eyebrow">Admin workspace</span>
+          <h1>Good to see you, {name}.</h1>
+          <p>One focused session today keeps the learning platform healthy.</p>
+        </div>
+        <div className="mini-stat-group">
+          <div className="mini-stat-card">
+            <span className="label">Users</span>
+            <strong>1,245</strong>
+          </div>
+          <div className="mini-stat-card">
+            <span className="label">Reports</span>
+            <strong className="danger">5</strong>
+          </div>
+        </div>
       </div>
 
       <div className="quick-actions grid-4">

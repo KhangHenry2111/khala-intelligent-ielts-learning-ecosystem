@@ -2,12 +2,26 @@ import { useAuth } from '../../app/AuthContext';
 
 export function TeacherDashboard() {
   const { user } = useAuth();
+  const name = user?.fullName || user?.username || 'Teacher';
 
   return (
     <div className="dashboard-container">
       <div className="dashboard-welcome glass-card">
-        <h1>Teacher Workspace</h1>
-        <p>Manage your classes and review student work.</p>
+        <div>
+          <span className="eyebrow">Teacher workspace</span>
+          <h1>Welcome back, {name}.</h1>
+          <p>Manage your classes and review student work.</p>
+        </div>
+        <div className="mini-stat-group">
+          <div className="mini-stat-card">
+            <span className="label">Classes</span>
+            <strong>4</strong>
+          </div>
+          <div className="mini-stat-card">
+            <span className="label">Reviews</span>
+            <strong className="warning">12</strong>
+          </div>
+        </div>
       </div>
 
       <div className="quick-actions grid-2">
