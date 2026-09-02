@@ -6,38 +6,45 @@ Tests connection and queries all users from the database
 import configparser
 import sys
 from datetime import datetime
-from sqlalchemy import create_engine, text, MetaData, Table, Column, String, DateTime, Float
-from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
+try:
+    from sqlalchemy import create_engine, text, Column, String, DateTime, Float
+    from sqlalchemy.orm import sessionmaker, declarative_base
+    from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
+except ImportError:
+    create_engine = None
+    text = None
+    Column = String = DateTime = Float = UNIQUEIDENTIFIER = None
+    sessionmaker = declarative_base = None
 
 # Configuration
 CONFIG_FILE = "config.cfg"
 
 # Define User model
-Base = declarative_base()
+if declarative_base is not None:
+    Base = declarative_base()
 
-class User(Base):
-    __tablename__ = 'User'
-    
-    UserID = Column(UNIQUEIDENTIFIER, primary_key=True)
-    FullName = Column(String(255), nullable=False)
-    Username = Column(String(100), nullable=False, unique=True)
-    Password = Column(String(255), nullable=False)
-    Email = Column(String(255), nullable=False, unique=True)
-    PhoneNumber = Column(String(20))
-    Avatar = Column(String(500))
-    Role = Column(String(20), default='USER')
-    Status = Column(String(20), default='Active')
-    EmailVerified = Column(String(1), default='0')
-    CurrentBand = Column(Float)
-    TargetBand = Column(Float)
-    LearningLevel = Column(String(20))
-    CreatedAt = Column(DateTime)
-    UpdatedAt = Column(DateTime)
-    LastLogin = Column(DateTime)
-    
-    def __repr__(self):
-        return f"<User(UserID='{self.UserID}', Username='{self.Username}', Email='{self.Email}')>"
+    class User(Base):
+        __tablename__ = 'User'
+
+        UserID = Column(UNIQUEIDENTIFIER, primary_key=True)
+        FullName = Column(String(255), nullable=False)
+        Username = Column(String(100), nullable=False, unique=True)
+        Password = Column(String(255), nullable=False)
+        Email = Column(String(255), nullable=False, unique=True)
+        PhoneNumber = Column(String(20))
+        Avatar = Column(String(500))
+        Role = Column(String(20), default='USER')
+        Status = Column(String(20), default='Active')
+        EmailVerified = Column(String(1), default='0')
+        CurrentBand = Column(Float)
+        TargetBand = Column(Float)
+        LearningLevel = Column(String(20))
+        CreatedAt = Column(DateTime)
+        UpdatedAt = Column(DateTime)
+        LastLogin = Column(DateTime)
+
+        def __repr__(self):
+            return f"<User(UserID='{self.UserID}', Username='{self.Username}', Email='{self.Email}')>"
 
 
 def read_connection_string(config_file):

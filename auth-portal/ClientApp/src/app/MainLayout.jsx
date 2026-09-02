@@ -1,22 +1,31 @@
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 
+function normalizeRole(value) {
+  const role = String(value ?? '').trim().toLowerCase();
+  if (role === 'student') return 'user';
+  if (role === 'instructor' || role === 'teacher') return 'teacher';
+  if (role === 'admin') return 'admin';
+  return role || 'user';
+}
+
 export function MainLayout({ children }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const role = user?.userType?.toLowerCase() || 'user';
+  const role = normalizeRole(user?.userType);
+  const userRank = String(user?.rank || user?.details?.Rank || user?.details?.rank || 'Bronze').trim().toLowerCase();
+  const rankName = userRank === 'gold' || userRank === 'vàng' ? 'Vàng' : userRank === 'silver' || userRank === 'bạc' ? 'Bạc' : 'Đồng';
 
   const menuItems = {
     user: [
-      { name: 'Dashboard', path: '/user/dashboard' },
-      { name: 'Learn', path: '/user/dashboard' },
-      { name: 'Practice', path: '/user/dashboard' },
-      { name: 'Test', path: '/user/dashboard' },
-      { name: 'AI Quiz', path: '/user/dashboard' },
-      { name: 'Lessons', path: '/user/dashboard' },
-      { name: 'Progress', path: '/user/dashboard' },
-      { name: 'Package', path: '/user/dashboard' },
+      { name: 'Quiz có sẵn', path: '/user/feature/available-quiz' },
+      { name: 'AI tạo quiz', path: '/user/feature/ai-quiz' },
+      { name: 'Test trình độ', path: '/user/feature/level-test' },
+      { name: 'Upload tài liệu', path: '/user/feature/upload' },
+      { name: 'Kho tri thức', path: '/user/feature/knowledge' },
+      { name: 'Kết quả', path: '/user/feature/results' },
+      { name: 'Gói học', path: '/user/dashboard' },
     ],
     teacher: [
       { name: 'Dashboard', path: '/teacher/dashboard' },
@@ -52,7 +61,10 @@ export function MainLayout({ children }) {
               end
               className={() => `nav-item ${location.pathname === item.path ? 'active' : ''}`}
             >
-              {item.name}
+              <span>{item.name}</span>
+              {role === 'user' && item.name !== 'Gói học' && item.name !== 'Kết quả' && (
+                <small className="nav-rank">{rankName}</small>
+              )}
             </NavLink>
           ))}
         </nav>

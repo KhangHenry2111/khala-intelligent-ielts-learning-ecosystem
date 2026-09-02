@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from urllib.parse import quote_plus
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config.cfg"
 SCRIPT_PATH = ROOT / "SqlScripts.sql"
 
@@ -97,7 +97,9 @@ def _split_sql_statements(sql_text: str):
             statement_lines.append(line)
 
     if statement_lines:
-        yield "\n".join(statement_lines)
+        statement = "\n".join(statement_lines).strip()
+        if statement:
+            yield statement
 
 
 def _build_engine_url(odbc_connection_string: str) -> str:
@@ -173,7 +175,16 @@ class TestSqlScripts(unittest.TestCase):
             cls.engine = create_engine(engine_url, future=True)
             cls.connection = cls.engine.connect()
             cls.connection = cls.connection.execution_options(isolation_level="AUTOCOMMIT")
+            table_exists = cls.connection.execute(
+                text("SELECT OBJECT_ID(N'[User]', N'U')")
+            ).scalar()
+            if table_exists is None:
+                raise unittest.SkipTest(
+                    "Database is reachable, but the [User] table is missing. Run SqlScripts.sql first."
+                )
         except Exception as exc:
+            if isinstance(exc, unittest.SkipTest):
+                raise
             raise unittest.SkipTest(f"Could not connect to SQL Server: {exc}")
 
     @classmethod

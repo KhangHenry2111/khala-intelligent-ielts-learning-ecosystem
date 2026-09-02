@@ -5,9 +5,17 @@ import { useAuth } from '../../app/AuthContext';
 
 const labels = { user: 'User', teacher: 'Teacher', admin: 'Admin' };
 
+function normalizeRole(value) {
+  const role = String(value ?? '').trim().toLowerCase();
+  if (role === 'student') return 'user';
+  if (role === 'instructor' || role === 'teacher') return 'teacher';
+  if (role === 'admin') return 'admin';
+  return role || 'user';
+}
+
 export function AuthPage({ mode, role: fixedRole }) {
   const { role: routeRole } = useParams();
-  const role = (fixedRole || routeRole || 'user').toLowerCase();
+  const role = normalizeRole(fixedRole || routeRole || 'user');
   const title = labels[role] || 'Student';
   const isRegister = mode === 'register';
   const [form, setForm] = useState({});

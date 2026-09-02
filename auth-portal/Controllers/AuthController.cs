@@ -2,6 +2,7 @@ using System;
 using AuthPortal.Models;
 using AuthPortal.Services;
 using Microsoft.AspNetCore.Mvc;
+using System.Linq;
 
 namespace AuthPortal.Controllers;
 
@@ -57,6 +58,8 @@ public class AuthController : ControllerBase
                         email = user.Email,
                         userType = user.UserType,
                         details = user.Details
+                            .Where(detail => !string.Equals(detail.Key, "Password", StringComparison.OrdinalIgnoreCase))
+                            .ToDictionary(detail => detail.Key, detail => detail.Value)
                     }
                 });
             }

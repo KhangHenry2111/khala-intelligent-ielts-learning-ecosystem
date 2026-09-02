@@ -13,7 +13,7 @@ from pathlib import Path
 class IeltsAppLauncher:
     """Main application launcher for IELTS components"""
     
-    def __init__(self):
+    def __init__(self):                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
         self.base_dir = Path(__file__).parent
         self.auth_portal_dir = self.base_dir / "auth-portal"
         self.venv_python = self.base_dir / "venv" / "Scripts" / "python.exe"
@@ -23,17 +23,17 @@ class IeltsAppLauncher:
         self.python_exe = str(self.venv_python) if self.venv_python.exists() else sys.executable
     
     def print_banner(self):
-        """Print application banner"""
+        """Print application banner"""                                                                                                                                                                                                                                                                              
         print("\n" + "=" * 80)
         print("╔" + "=" * 78 + "╗")
         print("║" + " " * 78 + "║")
         print("║" + "IELTS STUDY ASSISTANT - MAIN LAUNCHER".center(78) + "║")
         print("║" + " " * 78 + "║")
-        print("╚" + "=" * 78 + "╝")
+        print("╚" + "=" * 78 + "╝")                                                                             
         print("=" * 80 + "\n")
-    
+
     def print_menu(self):
-        """Display main menu"""
+        """Display main menu"""                                                                                                                                                                                                                                                                                                                                             
         print("\n┌─ MAIN MENU ────────────────────────────────────────────────────────────────┐")
         print("│                                                                            │")
         print("│  1. Test Database Connection (Python)                                     │")

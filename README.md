@@ -77,15 +77,31 @@ Login tìm user active trong database và trả `user` không bao gồm password
 
 ## Kiểm tra
 
+Chạy toàn bộ kiểm thử và build frontend bằng một lệnh từ thư mục `ielts-study-assistant`:
+
 ```powershell
-cd auth-portal
-dotnet build --no-restore
-dotnet test
-cd ..
-python -m unittest tests.test_sql_scripts
+powershell -ExecutionPolicy Bypass -File .\scripts\run_all_tests.ps1
 ```
 
-SQL test cần `pyodbc`, driver SQL Server và cấu hình hợp lệ trong `config.cfg`. Test .NET có thể cần database tùy test case.
+Script in kết quả riêng cho Python, .NET và frontend, sau đó in bảng tổng hợp. Nó trả exit code `1` nếu có nhóm thất bại.
+
+Các test được sắp xếp như sau:
+
+- `tests/test_connection_helpers.py`: unit test Python, chạy offline.
+- `tests/test_sql_scripts.py`: integration test SQL Server; tự skip nếu thiếu SQLAlchemy, driver, config hoặc database.
+- `tests/AuthPortal.Tests/`: unit test xUnit cho `AuthService` và `AuthController`; không cần dữ liệu demo.
+- `scripts/run_all_tests.ps1`: test runner thống nhất.
+
+Có thể chạy riêng:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+dotnet test tests/AuthPortal.Tests/AuthPortal.Tests.csproj --no-restore
+cd auth-portal\ClientApp
+npm run build
+```
+
+SQL integration test cần `pyodbc`, driver SQL Server và cấu hình hợp lệ trong `config.cfg`. Build frontend ghi output vào `auth-portal/wwwroot`; không sửa trực tiếp thư mục này.
 
 ## Kiến trúc tổng thể hệ thống IELTS AI Learning Platform
 
