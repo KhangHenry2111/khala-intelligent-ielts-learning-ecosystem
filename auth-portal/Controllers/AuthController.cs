@@ -3,6 +3,7 @@ using AuthPortal.Models;
 using AuthPortal.Services;
 using Microsoft.AspNetCore.Mvc;
 using System.Linq;
+using System.Collections.Generic;
 
 namespace AuthPortal.Controllers;
 
@@ -41,16 +42,18 @@ public class AuthController : ControllerBase
                 return BadRequest(new { success = false, message = "Password is required" });
             }
 
-            var user = _auth.Authenticate(req.Username, req.Password, req.UserType);
+            var user = _auth.Authenticate(req.Username.Trim(), req.Password, req.UserType);
 
             if (user is not null)
             {
                 Console.WriteLine($"[AuthController] ✓ SUCCESS: Login successful for user: {user.Username}");
                 _auth.PrintUserInfo(user);
                 
-                return Ok(new { 
+                var token = _auth.CreateSession(user);
+                return Ok(new {
                     success = true, 
                     message = "Login successful",
+                    token,
                     user = new {
                         id = user.Id,
                         username = user.Username,
@@ -112,6 +115,11 @@ public class AuthController : ControllerBase
                 return StatusCode(403, new { success = false, message = "Forbidden: Admin accounts cannot be created via this API." });
             }
 
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(new { success = false, message = "Invalid registration data.", errors = ModelState.Values.SelectMany(value => value.Errors).Select(error => error.ErrorMessage) });
+            }
+
             if (string.IsNullOrWhiteSpace(req.Username) || string.IsNullOrWhiteSpace(req.Password) || string.IsNullOrWhiteSpace(req.Email) || string.IsNullOrWhiteSpace(req.UserType))
             {
                 return BadRequest(new { success = false, message = "Username, Password, Email, and UserType are required." });
@@ -150,7 +158,18 @@ public class AuthController : ControllerBase
         {
             Console.WriteLine($"[AuthController] ✗✗✗ EXCEPTION OCCURRED DURING REGISTER ✗✗✗");
             Console.WriteLine($"[AuthController] Message: {ex.Message}");
-            return StatusCode(500, new { success = false, message = "An error occurred during registration", error = ex.Message });
+            return StatusCode(500, new { success = false, message = "An error occurred during registration" });
         }
+    }
+
+    [HttpPost("logout")]
+    public IActionResult Logout([FromBody] LogoutRequest? req)
+    {
+        var token = req?.Token ?? Request.Headers.Authorization.ToString().Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        if (string.IsNullOrWhiteSpace(token))
+            return BadRequest(new { success = false, message = "Token is required" });
+
+        _auth.RevokeSession(token);
+        return Ok(new { success = true, message = "Logout successful" });
     }
 }

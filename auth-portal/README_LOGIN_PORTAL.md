@@ -86,6 +86,31 @@ The existing `wwwroot/js/auth.js` already:
 
 ## How to Test
 
+### Auth API
+
+The authentication endpoints are available under `/api/auth`:
+
+- `POST /api/auth/register` accepts registration data as JSON and validates username, password, email, phone number, and profile fields.
+- `POST /api/auth/login` returns a session token and user information without the password.
+- `POST /api/auth/logout` accepts `{ "token": "..." }` or a `Bearer` authorization header and revokes the session token.
+
+Duplicate registration responses identify the existing field: `Username already exists.`, `Email already exists.`, or `PhoneNumber already exists.`
+
+Example registration request:
+
+```json
+{
+  "username": "student01",
+  "password": "a-strong-password",
+  "email": "student01@example.com",
+  "userType": "student",
+  "fullName": "Student Example",
+  "phoneNumber": "0901234567",
+  "dateOfBirth": "2000-01-15",
+  "gender": "Other"
+}
+```
+
 ### Method 1: Web Interface
 1. Start the AuthPortal application:
    ```bash

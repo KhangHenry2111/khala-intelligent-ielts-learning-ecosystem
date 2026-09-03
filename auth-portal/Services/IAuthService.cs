@@ -8,6 +8,10 @@ public interface IAuthService
     /// Authenticate against configured user store. Returns a UserInfo when successful, null otherwise.
     /// </summary>
     UserInfo? Authenticate(string username, string password, string userType);
+
+    string CreateSession(UserInfo user);
+
+    bool RevokeSession(string token);
     
     /// <summary>
     /// Print all user information to console

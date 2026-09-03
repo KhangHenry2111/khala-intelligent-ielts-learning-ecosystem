@@ -7,10 +7,12 @@ using System;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using System.Collections.Concurrent;
 
 public class AuthService : IAuthService
 {
     private readonly string? _connectionString;
+    private readonly ConcurrentDictionary<string, UserInfo> _sessions = new();
 
     public AuthService(IConfiguration config)
     {
@@ -39,9 +41,35 @@ public class AuthService : IAuthService
         if (string.IsNullOrEmpty(storedPassword))
             return false;
 
-        // Tạm thời so sánh trực tiếp password vì tính năng encoder chưa hoàn thiện
-        return plainPassword.Equals(storedPassword);
+        if (!storedPassword.StartsWith("PBKDF2$", StringComparison.Ordinal))
+            return plainPassword.Equals(storedPassword, StringComparison.Ordinal);
+
+        var parts = storedPassword.Split('$');
+        if (parts.Length != 4 || !int.TryParse(parts[1], out var iterations))
+            return false;
+
+        var salt = Convert.FromBase64String(parts[2]);
+        var expected = Convert.FromBase64String(parts[3]);
+        var actual = Rfc2898DeriveBytes.Pbkdf2(plainPassword, salt, iterations, HashAlgorithmName.SHA256, expected.Length);
+        return CryptographicOperations.FixedTimeEquals(actual, expected);
     }
+
+    private string HashPasswordSecurely(string password)
+    {
+        const int iterations = 120_000;
+        var salt = RandomNumberGenerator.GetBytes(16);
+        var hash = Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, 32);
+        return $"PBKDF2${iterations}${Convert.ToBase64String(salt)}${Convert.ToBase64String(hash)}";
+    }
+
+    public string CreateSession(UserInfo user)
+    {
+        var token = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+        _sessions[token] = user;
+        return token;
+    }
+
+    public bool RevokeSession(string token) => !string.IsNullOrWhiteSpace(token) && _sessions.TryRemove(token, out _);
 
     public UserInfo? Authenticate(string username, string password, string userType)
     {
@@ -255,14 +283,37 @@ public class AuthService : IAuthService
 
             if (ut == "student" || ut == "user")
             {
-                var sql = @"INSERT INTO [User] (FullName, Username, Password, Email) 
-                            VALUES (@FullName, @Username, @Password, @Email)";
+                var duplicateSql = @"SELECT TOP 1 CASE
+                    WHEN Username = @Username THEN 'Username'
+                    WHEN Email = @Email THEN 'Email'
+                    WHEN @PhoneNumber IS NOT NULL AND PhoneNumber = @PhoneNumber THEN 'PhoneNumber'
+                    END
+                    FROM [User]
+                    WHERE Username = @Username OR Email = @Email
+                       OR (@PhoneNumber IS NOT NULL AND PhoneNumber = @PhoneNumber)";
                 using var cmd = conn.CreateCommand();
-                cmd.CommandText = sql;
-                cmd.Parameters.AddWithValue("@FullName", string.IsNullOrWhiteSpace(req.FullName) ? req.Username : req.FullName);
-                cmd.Parameters.AddWithValue("@Username", req.Username);
-                cmd.Parameters.AddWithValue("@Password", req.Password);
-                cmd.Parameters.AddWithValue("@Email", req.Email);
+                cmd.CommandText = duplicateSql;
+                AddParameter(cmd, "@Username", req.Username);
+                AddParameter(cmd, "@Email", req.Email);
+                AddParameter(cmd, "@PhoneNumber", req.PhoneNumber);
+                var duplicate = cmd.ExecuteScalar()?.ToString();
+                if (!string.IsNullOrWhiteSpace(duplicate))
+                {
+                    errorMessage = $"{duplicate} already exists.";
+                    return false;
+                }
+
+                cmd.CommandText = @"INSERT INTO [User]
+                    (FullName, Username, Password, Email, PhoneNumber, DateOfBirth, Gender)
+                    VALUES (@FullName, @Username, @Password, @Email, @PhoneNumber, @DateOfBirth, @Gender)";
+                cmd.Parameters.Clear();
+                AddParameter(cmd, "@FullName", string.IsNullOrWhiteSpace(req.FullName) ? req.Username : req.FullName);
+                AddParameter(cmd, "@Username", req.Username);
+                AddParameter(cmd, "@Password", HashPasswordSecurely(req.Password));
+                AddParameter(cmd, "@Email", req.Email);
+                AddParameter(cmd, "@PhoneNumber", req.PhoneNumber);
+                AddParameter(cmd, "@DateOfBirth", req.DateOfBirth);
+                AddParameter(cmd, "@Gender", req.Gender);
 
                 cmd.ExecuteNonQuery();
                 return true;
@@ -275,7 +326,7 @@ public class AuthService : IAuthService
                 cmd.CommandText = sql;
                 cmd.Parameters.AddWithValue("@FullName", req.FullName ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@Username", req.Username ?? (object)DBNull.Value);
-                cmd.Parameters.AddWithValue("@Password", req.Password ?? (object)DBNull.Value);
+                cmd.Parameters.AddWithValue("@Password", HashPasswordSecurely(req.Password));
                 cmd.Parameters.AddWithValue("@Email", req.Email ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@PhoneNumber", req.PhoneNumber ?? (object)DBNull.Value);
                 cmd.Parameters.AddWithValue("@Avatar", req.Avatar ?? (object)DBNull.Value);
@@ -299,7 +350,7 @@ public class AuthService : IAuthService
         {
             if (sqlEx.Number == 2627 || sqlEx.Number == 2601)
             {
-                errorMessage = "Username or Email already exists.";
+                errorMessage = "Username, Email, or PhoneNumber already exists.";
             }
             else
             {
@@ -312,5 +363,10 @@ public class AuthService : IAuthService
             errorMessage = $"An error occurred: {ex.Message}";
             return false;
         }
+    }
+
+    private static void AddParameter(SqlCommand command, string name, object? value)
+    {
+        command.Parameters.AddWithValue(name, value ?? DBNull.Value);
     }
 }

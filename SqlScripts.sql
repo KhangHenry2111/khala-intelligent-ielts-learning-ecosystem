@@ -713,6 +713,9 @@ CREATE NONCLUSTERED INDEX [IX_ReadingPassage_CreatedBy] ON [dbo].[ReadingPassage
 CREATE NONCLUSTERED INDEX [IX_ReadingPassage_ModerationStatus] ON [dbo].[ReadingPassage]([ModerationStatus] ASC);
 CREATE NONCLUSTERED INDEX [IX_Subscription_UserID_Status] ON [dbo].[Subscription]([UserID] ASC, [Status] ASC);
 CREATE NONCLUSTERED INDEX [IX_UserDocument_UserID] ON [dbo].[UserDocument]([UserID] ASC);
+CREATE UNIQUE NONCLUSTERED INDEX [UX_User_PhoneNumber]
+    ON [dbo].[User]([PhoneNumber] ASC)
+    WHERE [PhoneNumber] IS NOT NULL;
 GO
 
 /* ============================================================

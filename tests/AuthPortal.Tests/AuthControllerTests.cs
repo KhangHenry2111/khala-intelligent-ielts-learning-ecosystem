@@ -87,6 +87,28 @@ public class AuthControllerTests
         Assert.Equal("student", service.RegisteredRequest?.Username);
     }
 
+    [Fact]
+    public void Register_InvalidModelState_ReturnsBadRequest()
+    {
+        var controller = CreateController(new FakeAuthService(), true);
+        controller.ModelState.AddModelError(nameof(RegisterRequest.Email), "Invalid email");
+
+        var result = controller.Register(new RegisterRequest
+        {
+            Username = "student", Password = "secret", Email = "not-an-email", UserType = "student"
+        });
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void Logout_WithoutToken_ReturnsBadRequest()
+    {
+        var result = CreateController(new FakeAuthService(), true).Logout(new LogoutRequest());
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
     private static AuthController CreateController(IAuthService service, bool includeHeader = false)
     {
         var controller = new AuthController(service)
@@ -116,4 +138,7 @@ public class FakeAuthService : IAuthService
         errorMessage = "";
         return RegisterResult;
     }
+
+    public string CreateSession(UserInfo user) => "test-token";
+    public bool RevokeSession(string token) => token == "test-token";
 }
