@@ -1,5 +1,6 @@
 import { useParams } from 'react-router-dom';
 import { useAuth } from '../../app/AuthContext';
+import { AiQuizGenerator } from '../ai-quiz/AiQuizGenerator';
 
 const featureConfig = {
   'available-quiz': { title: 'Quiz có sẵn', description: 'Luyện tập với thư viện đề IELTS được tuyển chọn.', icon: 'Q', access: 'all', value: 'Không giới hạn' },
@@ -40,7 +41,7 @@ export function UserFeaturePage() {
           <h2>{value}</h2>
           <p>Bạn đang sử dụng quyền lợi theo gói {rank === 'gold' ? 'Vàng' : rank === 'silver' ? 'Bạc' : 'Đồng'}.</p>
         </div>
-        <button className="feature-action" type="button">Bắt đầu ngay <span>→</span></button>
+        {feature === 'ai-quiz' ? <AiQuizGenerator user={user} /> : <button className="feature-action" type="button">Bắt đầu ngay <span>→</span></button>}
       </section>
     </div>
   );

@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj": {}
+    "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj": {}
   },
   "projects": {
-    "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj": {
+    "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
+        "projectUniqueName": "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
         "projectName": "AuthPortal",
-        "projectPath": "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
+        "projectPath": "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\AuthPortal.csproj",
         "packagesPath": "C:\\Users\\Admin\\.nuget\\packages\\",
-        "outputPath": "d:\\IeltsApp\\ielts-study-assistant\\auth-portal\\obj\\",
+        "outputPath": "D:\\IeltsApp\\ielts-study-assistant\\auth-portal\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Admin\\AppData\\Roaming\\NuGet\\NuGet.Config"

@@ -28,7 +28,7 @@ function Invoke-TestGroup {
 }
 
 Invoke-TestGroup "Python unit and integration tests" $Python @(
-    "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"
+    "-m", "pytest", "AI_quiz/tests", "tests", "-v"
 )
 
 Invoke-TestGroup ".NET unit tests" "dotnet" @(

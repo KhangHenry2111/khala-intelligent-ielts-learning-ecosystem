@@ -18,6 +18,11 @@ ielts-study-assistant/
 		Models/                    # request/response models
 		Services/                  # business logic và database access
 		wwwroot/                   # React build output, không sửa tay
+   AI_quiz/                    # AI Quiz service độc lập
+      quiz_api.py                # FastAPI entry point
+      graph.py                   # LangGraph quiz pipeline
+      tool.py / tools.py         # Tool exports và implementations
+      tests/                     # Test riêng của AI Quiz
 		AuthPortal.csproj
 	tests/                       # Python và .NET tests
 	SqlScripts.sql               # schema database

@@ -277,6 +277,21 @@ body {
 
 .feature-action span { margin-left: 8px; }
 
+.quiz-generator { display: grid; gap: 12px; width: min(100%, 680px); }
+.skill-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.skill-picker button, .quiz-generator select, .quiz-generator textarea { border: 1px solid rgba(255,255,255,.14); border-radius: 8px; background: rgba(255,255,255,.06); color: var(--text-primary); font: inherit; padding: 10px 12px; }
+.skill-picker button, .quiz-exports button { cursor: pointer; }
+.skill-picker button.selected { background: var(--secondary-color); color: #062b20; border-color: transparent; font-weight: 700; }
+.quiz-generator textarea { resize: vertical; min-height: 150px; }
+.quiz-status { color: #6ee7b7; }
+.quiz-result { margin-top: 24px; }
+.quiz-result h2 { margin: 8px 0 14px; font-family: var(--font-heading); }
+.quiz-passage { color: var(--text-secondary); line-height: 1.7; margin-bottom: 18px; }
+.quiz-question { border-top: 1px solid rgba(255,255,255,.1); padding: 16px 0; line-height: 1.7; }
+.quiz-question div { color: var(--text-secondary); padding-left: 16px; }
+.quiz-question small { display: block; color: #6ee7b7; margin-top: 8px; }
+.quiz-exports { display: flex; gap: 8px; margin-top: 16px; }
+
 /* User package comparison */
 .plans-page {
   max-width: 1180px;
