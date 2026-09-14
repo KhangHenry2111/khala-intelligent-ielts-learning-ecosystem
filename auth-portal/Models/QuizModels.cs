@@ -57,6 +57,32 @@ public class SaveKnowledgeRequest
     public string? UploadedBy { get; set; }
 }
 
+public class ModerationDecisionRequest
+{
+    public string QuizId { get; set; } = string.Empty;
+    public string Status { get; set; } = "Approved";
+    public string? RejectionReason { get; set; }
+    public string? TeacherId { get; set; }
+}
+
+public class QuizModerationItem
+{
+    public string QuizId { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Skill { get; set; } = "Reading";
+    public string Level { get; set; } = "Intermediate";
+    public string Source { get; set; } = "AI";
+    public string Status { get; set; } = "PendingReview";
+    public string? PassageId { get; set; }
+    public string? PassageTitle { get; set; }
+    public string? Topic { get; set; }
+    public int? WordCount { get; set; }
+    public int QuestionCount { get; set; }
+    public string? PassageContent { get; set; }
+    public string? ModerationStatus { get; set; }
+    public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+}
+
 public class SaveQuizResponse
 {
     public bool Success { get; set; }
@@ -64,4 +90,12 @@ public class SaveQuizResponse
     public string? QuizId { get; set; }
     public string? PassageId { get; set; }
     public int QuestionsCount { get; set; }
+}
+
+public class EditQuizRequest
+{
+    public string? Title { get; set; }
+    public string? Level { get; set; }
+    public string? Topic { get; set; }
+    public string? PassageContent { get; set; }
 }

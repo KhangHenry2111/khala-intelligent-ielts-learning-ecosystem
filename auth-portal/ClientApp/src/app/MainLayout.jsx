@@ -15,32 +15,32 @@ export function MainLayout({ children }) {
   const location = useLocation();
   const role = normalizeRole(user?.userType);
   const userRank = String(user?.rank || user?.details?.Rank || user?.details?.rank || 'Bronze').trim().toLowerCase();
-  const rankName = userRank === 'gold' || userRank === 'vàng' ? 'Vàng' : userRank === 'silver' || userRank === 'bạc' ? 'Bạc' : 'Đồng';
+  const rankName = userRank === 'gold' || userRank === 'vàng' ? 'Gold' : userRank === 'silver' || userRank === 'bạc' ? 'Silver' : 'Bronze';
 
   const menuItems = {
     user: [
-      { name: 'Quiz có sẵn', path: '/user/feature/available-quiz' },
-      { name: 'AI tạo quiz', path: '/user/feature/ai-quiz' },
-      { name: 'Test trình độ', path: '/user/feature/level-test' },
-      { name: 'Upload tài liệu', path: '/user/feature/upload' },
-      { name: 'Kho tri thức', path: '/user/feature/knowledge' },
-      { name: 'Kết quả', path: '/user/feature/results' },
-      { name: 'Gói học', path: '/user/dashboard' },
+      { name: 'Available quizzes', path: '/user/feature/available-quiz' },
+      { name: 'AI quiz generator', path: '/user/feature/ai-quiz' },
+      { name: 'Level test', path: '/user/feature/level-test' },
+      { name: 'Upload document', path: '/user/feature/upload' },
+      { name: 'Knowledge base', path: '/user/feature/knowledge' },
+      { name: 'Results', path: '/user/feature/results' },
+      { name: 'Plans', path: '/user/dashboard' },
     ],
     teacher: [
       { name: 'Dashboard', path: '/teacher/dashboard' },
-      { name: 'Classes', path: '/teacher/dashboard' },
-      { name: 'Lessons', path: '/teacher/dashboard' },
-      { name: 'Grading', path: '/teacher/dashboard' },
-      { name: 'AI Review', path: '/teacher/dashboard' },
+      { name: 'Classes', path: '/teacher/classes' },
+      { name: 'Lessons', path: '/teacher/lessons' },
+      { name: 'Grading', path: '/teacher/grading' },
+      { name: 'AI Review', path: '/teacher/ai-review' },
     ],
     admin: [
       { name: 'Dashboard', path: '/admin/dashboard' },
-      { name: 'Accounts', path: '/admin/dashboard' },
-      { name: 'Teachers', path: '/admin/dashboard' },
-      { name: 'Content', path: '/admin/dashboard' },
-      { name: 'Feedback', path: '/admin/dashboard' },
-      { name: 'Reports', path: '/admin/dashboard' },
+      { name: 'Accounts', path: '/admin/accounts' },
+      { name: 'Teachers', path: '/admin/teachers' },
+      { name: 'Content', path: '/admin/content' },
+      { name: 'Feedback', path: '/admin/feedback' },
+      { name: 'Reports', path: '/admin/reports' },
     ]
   };
 
@@ -62,7 +62,7 @@ export function MainLayout({ children }) {
               className={() => `nav-item ${location.pathname === item.path ? 'active' : ''}`}
             >
               <span>{item.name}</span>
-              {role === 'user' && item.name !== 'Gói học' && item.name !== 'Kết quả' && (
+              {role === 'user' && item.name !== 'Plans' && item.name !== 'Results' && (
                 <small className="nav-rank">{rankName}</small>
               )}
             </NavLink>

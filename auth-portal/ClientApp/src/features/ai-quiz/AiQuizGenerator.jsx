@@ -11,21 +11,21 @@ export function AiQuizGenerator({ user }) {
 
   async function submitQuiz(event) {
     event.preventDefault();
-    setStatus('Đang kiểm tra tài liệu và tạo quiz...');
+    setStatus('Checking the document and generating a quiz...');
     setQuiz(null);
     try {
       const payload = file
         ? {
             document: `data:${file.fileType};base64,${file.contentBase64}`,
             input_type: 'image',
-            skill: skill === 'Toàn bộ' ? 'All' : skill,
+            skill: skill === 'All' ? 'All' : skill,
             tier: user?.rank || user?.details?.Rank || 'Bronze',
             user_id: user?.id || null,
           }
         : {
             document: content,
             input_type: 'text',
-            skill: skill === 'Toàn bộ' ? 'All' : skill,
+            skill: skill === 'All' ? 'All' : skill,
             tier: user?.rank || user?.details?.Rank || 'Bronze',
             user_id: user?.id || null,
           };
@@ -34,7 +34,7 @@ export function AiQuizGenerator({ user }) {
         user
       );
       setQuiz(result.quiz);
-      setStatus('Quiz đã tạo và đang chờ kiểm duyệt.');
+      setStatus('Quiz generated and awaiting review.');
     } catch (error) {
       setStatus(error.message);
     }
@@ -43,7 +43,7 @@ export function AiQuizGenerator({ user }) {
   async function downloadQuiz(extension) {
     const response = await aiQuizApi.export(quiz, extension);
     if (!response.ok) {
-      setStatus('Không thể xuất file.');
+      setStatus('Unable to export the file.');
       return;
     }
     const blob = await response.blob();
@@ -70,8 +70,8 @@ export function AiQuizGenerator({ user }) {
   return (
     <>
       <form className="quiz-generator" onSubmit={submitQuiz}>
-        <div className="skill-picker" role="group" aria-label="Chọn kỹ năng">
-          {['Reading', 'Speaking', 'Writing', 'Listening', 'Toàn bộ'].map((option) => (
+        <div className="skill-picker" role="group" aria-label="Select skill">
+          {['Reading', 'Speaking', 'Writing', 'Listening', 'All'].map((option) => (
             <button
               className={skill === option ? 'selected' : ''}
               key={option}
@@ -82,7 +82,7 @@ export function AiQuizGenerator({ user }) {
             </button>
           ))}
         </div>
-        <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)} aria-label="Độ khó">
+        <select value={difficulty} onChange={(event) => setDifficulty(event.target.value)} aria-label="Difficulty">
           <option>Beginner</option>
           <option>Intermediate</option>
           <option>Advanced</option>
@@ -91,11 +91,11 @@ export function AiQuizGenerator({ user }) {
         <textarea
           value={content}
           onChange={(event) => setContent(event.target.value)}
-          placeholder="Dán tài liệu IELTS hoặc chọn file..."
+          placeholder="Paste IELTS content or upload a file..."
           rows="8"
           required={!file}
         />
-        <button className="feature-action" type="submit">Tạo quiz <span>→</span></button>
+        <button className="feature-action" type="submit">Generate quiz <span>→</span></button>
         {status && <p className="quiz-status" role="status">{status}</p>}
       </form>
       {quiz && (
@@ -108,7 +108,7 @@ export function AiQuizGenerator({ user }) {
             <article className="quiz-question" key={`${question.content}-${index}`}>
               <strong>{index + 1}. {question.content}</strong>
               {question.options?.map((option) => <div key={option}>{option}</div>)}
-              <small>Đáp án: {question.correctAnswer}</small>
+              <small>Answer: {question.correctAnswer}</small>
             </article>
           ))}
           <div className="quiz-exports">

@@ -1,56 +1,56 @@
 export function UserDashboard() {
   const plans = [
-    { name: 'Đồng', price: 'Miễn phí', tone: 'bronze' },
-    { name: 'Bạc', price: '199.000đ / tháng', tone: 'silver', featured: true },
-    { name: 'Vàng', price: '399.000đ / tháng', tone: 'gold' },
+    { name: 'Bronze', price: 'Free', tone: 'bronze' },
+    { name: 'Silver', price: '199,000 VND / month', tone: 'silver', featured: true },
+    { name: 'Gold', price: '399,000 VND / month', tone: 'gold' },
   ];
 
   const features = [
-    ['Quiz có sẵn', 'Không giới hạn', 'Không giới hạn', 'Không giới hạn'],
-    ['AI tạo quiz', '8 lượt/tháng', '60 lượt/tháng', '250 lượt/tháng'],
-    ['Test trình độ', '1 lần/tháng', '4 lần/tháng', '12 lần/tháng'],
-    ['Upload tài liệu', '5 MB', '20 MB', '50 MB'],
-    ['Kho tri thức', 'Cơ bản', 'Đầy đủ', 'Đầy đủ'],
-    ['AI phân tích kết quả', '✓', '✓', '✓'],
-    ['Speaking AI', '✗', '✓', '✓'],
-    ['Speaking giáo viên', '✗', '✗', '✓'],
-    ['Writing AI', 'Giới hạn', '✓', '✓'],
-    ['Writing giáo viên', '✗', '✗', '✓'],
+    ['Available quizzes', 'Unlimited', 'Unlimited', 'Unlimited'],
+    ['AI quiz generation', '8 per month', '60 per month', '250 per month'],
+    ['Level test', '1 per month', '4 per month', '12 per month'],
+    ['Document upload', '5 MB', '20 MB', '50 MB'],
+    ['Knowledge base', 'Basic', 'Full', 'Full'],
+    ['AI result analysis', '✓', '✓', '✓'],
+    ['AI speaking practice', '✗', '✓', '✓'],
+    ['Teacher speaking feedback', '✗', '✗', '✓'],
+    ['AI writing feedback', 'Limited', '✓', '✓'],
+    ['Teacher writing feedback', '✗', '✗', '✓'],
   ];
 
   return (
     <div className="plans-page">
       <header className="plans-heading">
         <span className="eyebrow">IELTS AI learning</span>
-        <h1>Chọn gói học phù hợp với bạn</h1>
-        <p>Tập trung vào những công cụ giúp bạn tiến bộ đều đặn mỗi ngày.</p>
+        <h1>Choose a plan that fits your goals</h1>
+        <p>Focus on the tools that help you improve steadily every day.</p>
       </header>
 
-      <div className="plan-cards" aria-label="Các gói học">
+      <div className="plan-cards" aria-label="Learning plans">
         {plans.map((plan) => (
           <article className={`plan-card ${plan.featured ? 'featured' : ''}`} key={plan.name}>
-            {plan.featured && <span className="plan-ribbon">Phổ biến nhất</span>}
+            {plan.featured && <span className="plan-ribbon">Most popular</span>}
             <div className={`plan-icon ${plan.tone}`}>{plan.name[0]}</div>
             <h2>{plan.name}</h2>
             <p className="plan-price">{plan.price}</p>
             <button className={`plan-button ${plan.featured ? 'primary' : ''}`} type="button">
-              {plan.featured ? 'Nâng cấp gói' : 'Đang xem gói'}
+              {plan.featured ? 'Upgrade plan' : 'Current plan'}
             </button>
           </article>
         ))}
       </div>
 
-      <section className="feature-table-wrap" aria-label="So sánh quyền lợi các gói">
+      <section className="feature-table-wrap" aria-label="Plan comparisons">
         <div className="feature-table-head">
           <div>
-            <span className="eyebrow">So sánh quyền lợi</span>
-            <h2>Mọi công cụ bạn cần để luyện thi</h2>
+            <span className="eyebrow">Compare benefits</span>
+            <h2>Everything you need to prepare for IELTS</h2>
           </div>
-          <span className="feature-count">10 quyền lợi</span>
+          <span className="feature-count">10 benefits</span>
         </div>
         <div className="feature-table" role="table">
           <div className="feature-row feature-row-header" role="row">
-            <span role="columnheader">Tính năng</span>
+            <span role="columnheader">Feature</span>
             {plans.map((plan) => <span role="columnheader" key={plan.name}>{plan.name}</span>)}
           </div>
           {features.map(([label, ...values]) => (

@@ -1,0 +1,44 @@
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../shared/auth/AuthContext';
+import { normalizeRole } from '../../shared/lib/roles';
+
+export function ProfilePage() {
+  const { user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const details = user.details || {};
+  const role = normalizeRole(user.userType);
+
+  return (
+    <main className="profile-page">
+      <Link className="back-link" to={`/${role}/dashboard`}>← Back to dashboard</Link>
+      <section className="profile-card">
+        <div className="profile-intro">
+          <div className="profile-avatar">{(user.fullName || user.username)[0].toUpperCase()}</div>
+          <div>
+            <span className="eyebrow">Account profile</span>
+            <h1>{user.fullName || user.username}</h1>
+            <p>{user.email}</p>
+          </div>
+        </div>
+        <div className="details">
+          <h2>Your details</h2>
+          {Object.entries({ Username: user.username, Role: user.userType, ...details }).map(([key, value]) => (
+            <div key={key}>
+              <span>{key}</span>
+              <strong>{String(value ?? 'Not set')}</strong>
+            </div>
+          ))}
+        </div>
+        <button
+          className="quiet-button"
+          onClick={() => {
+            signOut();
+            navigate(`/${role}/login`);
+          }}
+        >
+          Log out
+        </button>
+      </section>
+    </main>
+  );
+}

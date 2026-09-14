@@ -1,9 +1,11 @@
 using AuthPortal.Controllers;
 using AuthPortal.Models;
 using AuthPortal.Services;
+using System;
 using System.Collections.Generic;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Configuration;
 using Xunit;
 
 namespace AuthPortal.Tests;
@@ -105,6 +107,30 @@ public class AuthControllerTests
     public void Logout_WithoutToken_ReturnsBadRequest()
     {
         var result = CreateController(new FakeAuthService(), true).Logout(new LogoutRequest());
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void QuizReview_WithNullPayload_ReturnsBadRequest()
+    {
+        var controller = new QuizController(new ConfigurationBuilder().AddInMemoryCollection().Build());
+
+        var result = controller.UpdateModerationDecision(null!);
+
+        Assert.IsType<BadRequestObjectResult>(result);
+    }
+
+    [Fact]
+    public void QuizReview_WithInvalidStatus_ReturnsBadRequest()
+    {
+        var controller = new QuizController(new ConfigurationBuilder().AddInMemoryCollection().Build());
+
+        var result = controller.UpdateModerationDecision(new ModerationDecisionRequest
+        {
+            QuizId = Guid.Empty.ToString(),
+            Status = "InvalidValue"
+        });
 
         Assert.IsType<BadRequestObjectResult>(result);
     }

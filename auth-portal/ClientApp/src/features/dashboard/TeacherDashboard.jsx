@@ -1,54 +1,107 @@
+import { useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../app/AuthContext';
 
-const summaryStats = [
-  { label: 'Lớp học', value: '08', tone: 'default' },
-  { label: 'Học viên', value: '286', tone: 'default' },
-  { label: 'Bài chấm', value: '24', tone: 'warning' },
-  { label: 'AI cần duyệt', value: '07', tone: 'danger' },
-];
-
 const classList = [
-  { name: 'IELTS Writing 6.5', students: 24, nextLesson: 'Hôm nay · 19:00 - 20:30', meet: 'Google Meet', status: 'Đang diễn ra' },
-  { name: 'IELTS Speaking Masterclass', students: 15, nextLesson: 'Ngày mai · 18:00', meet: 'Google Meet', status: 'Sắp mở' },
-  { name: 'General English Booster', students: 31, nextLesson: 'Thứ 5 · 17:30', meet: 'Google Meet', status: 'Đã lên lịch' },
+  { name: 'IELTS Writing 6.5', students: 24, nextLesson: 'Today · 7:00 PM - 8:30 PM', meet: 'Google Meet', status: 'In progress' },
+  { name: 'IELTS Speaking Masterclass', students: 15, nextLesson: 'Tomorrow · 6:00 PM', meet: 'Google Meet', status: 'Upcoming' },
+  { name: 'General English Booster', students: 31, nextLesson: 'Thursday · 5:30 PM', meet: 'Google Meet', status: 'Scheduled' },
 ];
 
 const lessonList = [
-  { title: 'Lesson 04: Task 2 Structure', type: 'Writing', price: 'Miễn phí', updated: '2 giờ trước' },
-  { title: 'Speaking Part 3 Cue Cards', type: 'Speaking', price: 'Gold', updated: 'Hôm qua' },
-  { title: 'Vocabulary Booster Band 7.5+', type: 'Vocabulary', price: 'Trả phí', updated: '3 ngày trước' },
+  { title: 'Lesson 04: Task 2 Structure', type: 'Writing', price: 'Free', updated: '2 hours ago' },
+  { title: 'Speaking Part 3 Cue Cards', type: 'Speaking', price: 'Gold', updated: 'Yesterday' },
+  { title: 'Vocabulary Booster Band 7.5+', type: 'Vocabulary', price: 'Paid', updated: '3 days ago' },
 ];
 
 const gradingQueue = [
-  { name: 'Nguyễn Minh A', task: 'Writing Task 2', score: '7.0', status: 'Chờ chấm' },
-  { name: 'Lê Hoàng B', task: 'Speaking Part 2', score: '8.5', status: 'Đã gửi nhận xét' },
-  { name: 'Phạm Thảo C', task: 'Writing Task 1', score: '6.5', status: 'Cần xem lại' },
-];
-
-const aiReviewQueue = [
-  { title: 'Set 18 - Reading Passage 2', level: 'Needs fix', author: 'AI Draft', action: 'Review' },
-  { title: 'Speaking Cue Card Pack', level: 'Ready', author: 'AI Draft', action: 'Approve' },
-  { title: 'Listening Gap Fill Set', level: 'Needs fix', author: 'AI Draft', action: 'Edit' },
+  { name: 'Nguyen Minh A', task: 'Writing Task 2', score: '7.0', status: 'Waiting for review' },
+  { name: 'Le Hoang B', task: 'Speaking Part 2', score: '8.5', status: 'Feedback sent' },
+  { name: 'Pham Thao C', task: 'Writing Task 1', score: '6.5', status: 'Needs review' },
 ];
 
 const quickActions = [
-  { title: 'Quản lý lớp học', description: 'Tạo lớp, thêm học viên, lên lịch học và chia sẻ link Google Meet.', accent: 'primary-gradient' },
-  { title: 'Quản lý bài giảng', description: 'Upload tài liệu, bài giảng, thiết lập miễn phí hoặc trả phí.', accent: 'secondary-gradient' },
-  { title: 'Chấm bài', description: 'Chấm Speaking và Writing cho học viên gói Vàng, gửi nhận xét.', accent: 'dark-gradient' },
-  { title: 'Kiểm duyệt AI', description: 'Xem xét, chỉnh sửa và phê duyệt bộ đề AI trước khi công khai.', accent: 'primary-gradient' },
+  { title: 'Class management', description: 'Create classes, add students, schedule lessons, and share Google Meet links.', accent: 'primary-gradient' },
+  { title: 'Lesson management', description: 'Upload materials, lessons, and configure free or paid access.', accent: 'secondary-gradient' },
+  { title: 'Grading', description: 'Mark Speaking and Writing assignments for Gold-tier students and send feedback.', accent: 'dark-gradient' },
+  { title: 'AI moderation', description: 'Review, edit, and approve AI-generated quiz content before publication.', accent: 'primary-gradient' },
 ];
+
+const decisionMap = {
+  Approved: { label: 'Approve', tone: 'approve' },
+  PendingReview: { label: 'Under review', tone: 'review' },
+  Rejected: { label: 'Reject', tone: 'reject' },
+};
 
 export function TeacherDashboard() {
   const { user } = useAuth();
   const name = user?.fullName || user?.username || 'Teacher';
+  const [reviewQueue, setReviewQueue] = useState([]);
+  const [loadingQueue, setLoadingQueue] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [expandedQuizId, setExpandedQuizId] = useState(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadQueue() {
+      try {
+        const response = await fetch('/api/quiz/moderation-queue');
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.message || 'Unable to load review queue');
+        if (active) setReviewQueue(payload.items || []);
+      } catch (error) {
+        if (active) setReviewQueue([]);
+      } finally {
+        if (active) setLoadingQueue(false);
+      }
+    }
+
+    loadQueue();
+    return () => { active = false; };
+  }, []);
+
+  const pendingCount = useMemo(() => reviewQueue.length, [reviewQueue]);
+
+  const handleDecision = async (quizId, status) => {
+    setSubmitting(true);
+    try {
+      const response = await fetch('/api/quiz/moderation-decision', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          quizId,
+          status,
+          teacherId: user?.id || user?.userId || user?.details?.Id || null,
+        }),
+      });
+
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(payload.message || 'Unable to save decision');
+      }
+
+      setReviewQueue((current) => current.filter((item) => item.quizId !== quizId));
+    } catch (error) {
+      alert(error.message || 'Unable to update review status');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const summaryStats = [
+    { label: 'Classes', value: '08', tone: 'default' },
+    { label: 'Students', value: '286', tone: 'default' },
+    { label: 'Assignments', value: '24', tone: 'warning' },
+    { label: 'AI pending review', value: String(pendingCount), tone: 'danger' },
+  ];
 
   return (
     <div className="dashboard-container teacher-dashboard">
       <div className="dashboard-welcome glass-card teacher-hero">
         <div>
           <span className="eyebrow">Teacher workspace</span>
-          <h1>Xin chào, {name}.</h1>
-          <p>Quản lý hồ sơ, lớp học, bài giảng, chấm bài và kiểm duyệt đề AI từ một nơi.</p>
+          <h1>Welcome, {name}.</h1>
+          <p>Manage your profile, classes, lessons, assignments, and AI quiz moderation from one place.</p>
         </div>
         <div className="mini-stat-group">
           {summaryStats.map((item) => (
@@ -75,8 +128,8 @@ export function TeacherDashboard() {
       <div className="content-grid teacher-main-grid">
         <section className="glass-card">
           <div className="section-head">
-            <h2>Hồ sơ giảng viên</h2>
-            <button type="button" className="link-btn">Chỉnh sửa</button>
+            <h2>Instructor profile</h2>
+            <button type="button" className="link-btn">Edit</button>
           </div>
 
           <div className="teacher-profile-panel">
@@ -86,7 +139,7 @@ export function TeacherDashboard() {
               <p>IELTS Instructor · Speaking & Writing Specialist</p>
               <div className="tag-row">
                 <span className="tag">IELTS 8.5</span>
-                <span className="tag">8+ năm kinh nghiệm</span>
+                <span className="tag">8+ years experience</span>
                 <span className="tag">Cambridge Trainer</span>
               </div>
             </div>
@@ -94,39 +147,39 @@ export function TeacherDashboard() {
 
           <div className="teacher-bio-block">
             <p>
-              Tạo lộ trình học cá nhân hóa, xây dựng bài giảng thực chiến và hướng dẫn học viên luyện thi IELTS theo chuẩn chấm điểm quốc tế.
+              Build personalized learning plans, design practical lesson content, and guide students through international IELTS scoring standards.
             </p>
           </div>
 
           <div className="teacher-certificates">
             <div>
-              <span className="label">Chứng chỉ</span>
+              <span className="label">Certificates</span>
               <strong>CELTA · TESOL · IELTS Trainer</strong>
             </div>
             <div>
-              <span className="label">Thông tin giới thiệu</span>
-              <strong>Học viên gói Vàng · 1:1 feedback · Speaking/Writing coach</strong>
+              <span className="label">Profile summary</span>
+              <strong>Gold-tier students · 1:1 feedback · Speaking/Writing coach</strong>
             </div>
           </div>
         </section>
 
         <section className="glass-card">
           <div className="section-head">
-            <h2>Tổng quan tháng</h2>
-            <button type="button" className="link-btn">Xem báo cáo</button>
+            <h2>Monthly overview</h2>
+            <button type="button" className="link-btn">View report</button>
           </div>
 
           <div className="metric-stack">
             <div className="metric-box">
-              <span className="label">Buổi dạy</span>
+              <span className="label">Sessions</span>
               <strong>32</strong>
             </div>
             <div className="metric-box">
-              <span className="label">Tỷ lệ hài lòng</span>
+              <span className="label">Satisfaction rate</span>
               <strong>96%</strong>
             </div>
             <div className="metric-box">
-              <span className="label">Khóa học mới</span>
+              <span className="label">New courses</span>
               <strong>5</strong>
             </div>
           </div>
@@ -136,8 +189,8 @@ export function TeacherDashboard() {
       <div className="grid-2 mt-30">
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý lớp học</h2>
-            <button type="button" className="link-btn">+ Tạo lớp</button>
+            <h2>Class management</h2>
+            <button type="button" className="link-btn">+ Create class</button>
           </div>
 
           <div className="list-stack">
@@ -145,7 +198,7 @@ export function TeacherDashboard() {
               <div key={item.name} className="info-list-item">
                 <div>
                   <h3>{item.name}</h3>
-                  <p>{item.students} học viên · {item.meet}</p>
+                  <p>{item.students} students · {item.meet}</p>
                 </div>
                 <div className="list-meta">
                   <span className="status-badge">{item.status}</span>
@@ -158,7 +211,7 @@ export function TeacherDashboard() {
 
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý bài giảng</h2>
+            <h2>Lesson management</h2>
             <button type="button" className="link-btn">Upload</button>
           </div>
 
@@ -182,8 +235,8 @@ export function TeacherDashboard() {
       <div className="grid-2 mt-30">
         <section className="glass-card">
           <div className="section-head">
-            <h2>Chấm bài</h2>
-            <button type="button" className="link-btn">Xem tất cả</button>
+            <h2>Grading</h2>
+            <button type="button" className="link-btn">View all</button>
           </div>
 
           <div className="queue-list">
@@ -204,23 +257,73 @@ export function TeacherDashboard() {
 
         <section className="glass-card">
           <div className="section-head">
-            <h2>Kiểm duyệt bộ đề AI</h2>
-            <button type="button" className="link-btn">Duyệt hàng loạt</button>
+            <h2>AI quiz moderation</h2>
+            <button type="button" className="link-btn">Bulk review</button>
           </div>
 
           <div className="queue-list">
-            {aiReviewQueue.map((item) => (
-              <div key={item.title} className="queue-item">
-                <div>
-                  <h3>{item.title}</h3>
-                  <p>{item.author}</p>
-                </div>
-                <div className="queue-meta">
-                  <span className={`review-pill ${item.level === 'Ready' ? 'ok' : 'warning'}`}>{item.level}</span>
-                  <small>{item.action}</small>
-                </div>
-              </div>
-            ))}
+            {loadingQueue ? (
+              <div className="queue-item empty-state">Loading review queue...</div>
+            ) : reviewQueue.length === 0 ? (
+              <div className="queue-item empty-state">No AI quiz sets are currently pending review.</div>
+            ) : (
+              reviewQueue.map((item) => {
+                const isExpanded = expandedQuizId === item.quizId;
+                return (
+                  <div key={item.quizId} className="queue-item review-item">
+                    <div className="review-main">
+                      <div className="review-summary">
+                        <h3>{item.title}</h3>
+                        <p>{item.passageTitle || item.topic || 'IELTS Reading'} · {item.level || 'Intermediate'}</p>
+                      </div>
+                      <button
+                        type="button"
+                        className="detail-toggle"
+                        onClick={() => setExpandedQuizId(isExpanded ? null : item.quizId)}
+                      >
+                        {isExpanded ? 'Hide details' : 'View details'}
+                      </button>
+                    </div>
+
+                    <div className="queue-meta">
+                      <span className={`review-pill ${item.status === 'Approved' ? 'ok' : 'warning'}`}>
+                        {item.moderationStatus === 'Approved' ? 'Approved' : item.moderationStatus === 'Rejected' ? 'Rejected' : 'Pending'}
+                      </span>
+                      <div className="review-actions">
+                        {Object.entries(decisionMap).map(([status, config]) => (
+                          <button
+                            key={status}
+                            type="button"
+                            className={`decision-btn ${config.tone}`}
+                            disabled={submitting}
+                            onClick={() => handleDecision(item.quizId, status)}
+                          >
+                            {config.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="review-detail-panel">
+                        <div className="detail-grid">
+                          <div><span>Skill</span><strong>{item.skill || 'Reading'}</strong></div>
+                          <div><span>Level</span><strong>{item.level || 'Intermediate'}</strong></div>
+                          <div><span>Source</span><strong>{item.source || 'AI'}</strong></div>
+                          <div><span>Question count</span><strong>{item.questionCount ?? 0}</strong></div>
+                          <div><span>Word count</span><strong>{item.wordCount ?? 0}</strong></div>
+                          <div><span>Topic</span><strong>{item.topic || 'General'}</strong></div>
+                        </div>
+                        <div className="detail-section">
+                          <span>Passage</span>
+                          <p>{item.passageContent || 'No passage content available.'}</p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
           </div>
         </section>
       </div>

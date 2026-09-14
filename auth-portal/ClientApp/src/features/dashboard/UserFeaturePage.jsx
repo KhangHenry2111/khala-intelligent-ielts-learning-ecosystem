@@ -3,12 +3,12 @@ import { useAuth } from '../../app/AuthContext';
 import { AiQuizGenerator } from '../ai-quiz/AiQuizGenerator';
 
 const featureConfig = {
-  'available-quiz': { title: 'Quiz có sẵn', description: 'Luyện tập với thư viện đề IELTS được tuyển chọn.', icon: 'Q', access: 'all', value: 'Không giới hạn' },
-  'ai-quiz': { title: 'AI tạo quiz', description: 'Tạo bộ câu hỏi cá nhân hóa theo mục tiêu học tập.', icon: 'AI', access: 'all', values: { bronze: '8 lượt/tháng', silver: '60 lượt/tháng', gold: '250 lượt/tháng' } },
-  'level-test': { title: 'Test trình độ', description: 'Đánh giá năng lực hiện tại và nhận lộ trình phù hợp.', icon: 'T', access: 'all', values: { bronze: '1 lần/tháng', silver: '4 lần/tháng', gold: '12 lần/tháng' } },
-  upload: { title: 'Upload tài liệu', description: 'Đưa tài liệu cá nhân vào không gian học tập của bạn.', icon: 'U', access: 'all', values: { bronze: '5 MB', silver: '20 MB', gold: '50 MB' } },
-  knowledge: { title: 'Kho tri thức', description: 'Khám phá nguồn tài liệu và kiến thức IELTS.', icon: 'K', access: 'all', values: { bronze: 'Cơ bản', silver: 'Đầy đủ', gold: 'Đầy đủ' } },
-  results: { title: 'Kết quả', description: 'Theo dõi tiến bộ và nhận phân tích từ AI sau mỗi lần luyện tập.', icon: 'R', access: 'all', value: 'AI phân tích kết quả' },
+  'available-quiz': { title: 'Available quizzes', description: 'Practice with a curated library of IELTS question sets.', icon: 'Q', access: 'all', value: 'Unlimited' },
+  'ai-quiz': { title: 'AI quiz generator', description: 'Create personalized question sets based on your learning goals.', icon: 'AI', access: 'all', values: { bronze: '8 per month', silver: '60 per month', gold: '250 per month' } },
+  'level-test': { title: 'Level test', description: 'Assess your current skills and receive a suitable study plan.', icon: 'T', access: 'all', values: { bronze: '1 per month', silver: '4 per month', gold: '12 per month' } },
+  upload: { title: 'Upload document', description: 'Add your own study materials to your personal learning space.', icon: 'U', access: 'all', values: { bronze: '5 MB', silver: '20 MB', gold: '50 MB' } },
+  knowledge: { title: 'Knowledge base', description: 'Explore IELTS resources and study content from one place.', icon: 'K', access: 'all', values: { bronze: 'Basic', silver: 'Full', gold: 'Full' } },
+  results: { title: 'Results', description: 'Track your progress and receive AI-based analysis after each practice session.', icon: 'R', access: 'all', value: 'AI result analysis' },
 };
 
 function normalizeRank(value) {
@@ -30,18 +30,18 @@ export function UserFeaturePage() {
       <header className="feature-hero glass-card">
         <div className="feature-hero-icon">{config.icon}</div>
         <div>
-          <span className="eyebrow">{rank === 'gold' ? 'Gói Vàng' : rank === 'silver' ? 'Gói Bạc' : 'Gói Đồng'}</span>
+          <span className="eyebrow">{rank === 'gold' ? 'Gold plan' : rank === 'silver' ? 'Silver plan' : 'Bronze plan'}</span>
           <h1>{config.title}</h1>
           <p>{config.description}</p>
         </div>
       </header>
       <section className="feature-workspace glass-card">
         <div>
-          <span className="eyebrow">Quyền lợi hiện tại</span>
+          <span className="eyebrow">Current access</span>
           <h2>{value}</h2>
-          <p>Bạn đang sử dụng quyền lợi theo gói {rank === 'gold' ? 'Vàng' : rank === 'silver' ? 'Bạc' : 'Đồng'}.</p>
+          <p>You are currently using benefits from the {rank === 'gold' ? 'Gold' : rank === 'silver' ? 'Silver' : 'Bronze'} plan.</p>
         </div>
-        {feature === 'ai-quiz' ? <AiQuizGenerator user={user} /> : <button className="feature-action" type="button">Bắt đầu ngay <span>→</span></button>}
+        {feature === 'ai-quiz' ? <AiQuizGenerator user={user} /> : <button className="feature-action" type="button">Get started <span>→</span></button>}
       </section>
     </div>
   );

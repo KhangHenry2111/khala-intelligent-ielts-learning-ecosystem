@@ -350,6 +350,165 @@ public class QuizController : ControllerBase
         }
     }
 
+    [HttpGet("moderation-queue")]
+    public IActionResult GetModerationQueue()
+    {
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+
+            var queue = new List<QuizModerationItem>();
+            string sql = @"
+                SELECT q.QuizID, q.Title, q.Skill, q.Level, q.Source, q.Status, q.CreatedAt,
+                       rp.PassageID, rp.Title AS PassageTitle, rp.Topic, rp.WordCount, rp.Content AS PassageContent, rp.ModerationStatus,
+                       ISNULL(qc.QuestionCount, 0) AS QuestionCount
+                FROM Quiz q
+                LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
+                LEFT JOIN (
+                    SELECT QuizID, COUNT(*) AS QuestionCount
+                    FROM Question
+                    GROUP BY QuizID
+                ) qc ON qc.QuizID = q.QuizID
+                WHERE q.Source = 'AI'
+                  AND q.Skill IN ('Reading', 'Reading+Writing')
+                  AND (
+                        q.Status IN ('Draft', 'PendingReview')
+                        OR rp.ModerationStatus IN ('Pending', 'Rejected')
+                      )
+                ORDER BY q.CreatedAt DESC";
+
+            using var cmd = new SqlCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                queue.Add(new QuizModerationItem
+                {
+                    QuizId = reader.GetGuid(reader.GetOrdinal("QuizID")).ToString(),
+                    Title = reader.IsDBNull(reader.GetOrdinal("Title")) ? "AI Generated Quiz" : reader.GetString(reader.GetOrdinal("Title")),
+                    Skill = reader.IsDBNull(reader.GetOrdinal("Skill")) ? "Reading" : reader.GetString(reader.GetOrdinal("Skill")),
+                    Level = reader.IsDBNull(reader.GetOrdinal("Level")) ? "Intermediate" : reader.GetString(reader.GetOrdinal("Level")),
+                    Source = reader.IsDBNull(reader.GetOrdinal("Source")) ? "AI" : reader.GetString(reader.GetOrdinal("Source")),
+                    Status = reader.IsDBNull(reader.GetOrdinal("Status")) ? "PendingReview" : reader.GetString(reader.GetOrdinal("Status")),
+                    PassageId = reader.IsDBNull(reader.GetOrdinal("PassageID")) ? null : reader.GetGuid(reader.GetOrdinal("PassageID")).ToString(),
+                    PassageTitle = reader.IsDBNull(reader.GetOrdinal("PassageTitle")) ? null : reader.GetString(reader.GetOrdinal("PassageTitle")),
+                    Topic = reader.IsDBNull(reader.GetOrdinal("Topic")) ? null : reader.GetString(reader.GetOrdinal("Topic")),
+                    WordCount = reader.IsDBNull(reader.GetOrdinal("WordCount")) ? null : reader.GetInt32(reader.GetOrdinal("WordCount")),
+                    PassageContent = reader.IsDBNull(reader.GetOrdinal("PassageContent")) ? null : reader.GetString(reader.GetOrdinal("PassageContent")),
+                    QuestionCount = reader.IsDBNull(reader.GetOrdinal("QuestionCount")) ? 0 : reader.GetInt32(reader.GetOrdinal("QuestionCount")),
+                    ModerationStatus = reader.IsDBNull(reader.GetOrdinal("ModerationStatus")) ? null : reader.GetString(reader.GetOrdinal("ModerationStatus")),
+                    CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
+                });
+            }
+
+            return Ok(new { success = true, items = queue });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPost("moderation-decision")]
+    public IActionResult UpdateModerationDecision([FromBody] ModerationDecisionRequest? req)
+    {
+        if (req == null)
+        {
+            return BadRequest(new { success = false, message = "Review payload is required." });
+        }
+
+        if (string.IsNullOrWhiteSpace(req.QuizId) || !Guid.TryParse(req.QuizId, out var quizId))
+        {
+            return BadRequest(new { success = false, message = "A valid quiz id is required." });
+        }
+
+        var normalizedDecision = req.Status?.Trim();
+        var allowedStatuses = new[] { "Approved", "PendingReview", "Rejected", "Pending" };
+        if (string.IsNullOrWhiteSpace(normalizedDecision) || !allowedStatuses.Contains(normalizedDecision, StringComparer.OrdinalIgnoreCase))
+        {
+            return BadRequest(new { success = false, message = "Decision must be Approved, PendingReview, Pending, or Rejected." });
+        }
+
+        var decisionStatus = normalizedDecision.Equals("Pending", StringComparison.OrdinalIgnoreCase) ? "PendingReview" : normalizedDecision;
+        var passageStatus = decisionStatus.Equals("PendingReview", StringComparison.OrdinalIgnoreCase) ? "Pending" : decisionStatus;
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+
+            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
+            using (var cmd = new SqlCommand(selectQuiz, conn))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                var passageIdObj = cmd.ExecuteScalar();
+                if (passageIdObj == null || passageIdObj == DBNull.Value)
+                {
+                    return NotFound(new { success = false, message = "Quiz not found." });
+                }
+
+                var passageIdString = passageIdObj?.ToString();
+                if (string.IsNullOrWhiteSpace(passageIdString) || !Guid.TryParse(passageIdString, out var parsedPassageId))
+                {
+                    return BadRequest(new { success = false, message = "Quiz passage id is invalid." });
+                }
+
+                var passageId = parsedPassageId;
+                var teacherId = Guid.TryParse(req.TeacherId, out var teacherGuid) ? teacherGuid : (Guid?)null;
+
+                using var tx = conn.BeginTransaction();
+
+                using (var updateQuiz = new SqlCommand(@"
+                    UPDATE Quiz
+                    SET Status = @Status,
+                        ApprovedBy = @ApprovedBy,
+                        ApprovedAt = @ApprovedAt
+                    WHERE QuizID = @QuizId", conn, tx))
+                {
+                    updateQuiz.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = decisionStatus });
+                    updateQuiz.Parameters.Add(new SqlParameter("@ApprovedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
+                    updateQuiz.Parameters.Add(new SqlParameter("@ApprovedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    updateQuiz.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                    updateQuiz.ExecuteNonQuery();
+                }
+
+                using (var updatePassage = new SqlCommand(@"
+                    UPDATE ReadingPassage
+                    SET ModerationStatus = @ModerationStatus,
+                        ModeratedBy = @ModeratedBy,
+                        ModeratedByType = @ModeratedByType,
+                        ModeratedAt = @ModeratedAt,
+                        RejectionReason = @RejectionReason,
+                        UpdatedAt = @UpdatedAt
+                    WHERE PassageID = @PassageId", conn, tx))
+                {
+                    updatePassage.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = passageStatus });
+                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
+                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = teacherId.HasValue ? "Teacher" : DBNull.Value });
+                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    updatePassage.Parameters.Add(new SqlParameter("@RejectionReason", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.RejectionReason) ? DBNull.Value : (object)req.RejectionReason.Trim() });
+                    updatePassage.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    updatePassage.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId });
+                    updatePassage.ExecuteNonQuery();
+                }
+
+                tx.Commit();
+            }
+
+            return Ok(new
+            {
+                success = true,
+                message = $"Quiz review saved as {decisionStatus}.",
+                quizId = req.QuizId,
+                status = decisionStatus
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
     [HttpPost("knowledge")]
     public IActionResult SaveKnowledgeDocument([FromBody] SaveKnowledgeRequest req)
     {
@@ -409,6 +568,181 @@ public class QuizController : ControllerBase
                 message = "Knowledge document saved successfully.",
                 docId = docId.ToString()
             });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPut("edit/{id}")]
+    public IActionResult EditQuiz(string id, [FromBody] EditQuizRequest req)
+    {
+        if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var quizId))
+        {
+            return BadRequest(new { success = false, message = "A valid quiz id is required." });
+        }
+
+        if (req == null)
+        {
+            return BadRequest(new { success = false, message = "Edit payload is required." });
+        }
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+
+            // Check if quiz exists and get PassageID
+            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
+            object? passageIdObj;
+            using (var cmd = new SqlCommand(selectQuiz, conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                passageIdObj = cmd.ExecuteScalar();
+            }
+
+            if (passageIdObj == null)
+            {
+                return NotFound(new { success = false, message = "Quiz not found." });
+            }
+
+            // Update Quiz
+            string updateQuiz = @"
+                UPDATE Quiz 
+                SET Title = COALESCE(@Title, Title),
+                    Level = COALESCE(@Level, Level)
+                WHERE QuizID = @QuizId";
+            using (var cmd = new SqlCommand(updateQuiz, conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = (object?)req.Title ?? DBNull.Value });
+                cmd.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = (object?)req.Level ?? DBNull.Value });
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Update ReadingPassage if exists
+            if (passageIdObj != DBNull.Value && Guid.TryParse(passageIdObj.ToString(), out var passageId))
+            {
+                string updatePassage = @"
+                    UPDATE ReadingPassage 
+                    SET Title = COALESCE(@Title, Title),
+                        Level = COALESCE(@Level, Level),
+                        Topic = COALESCE(@Topic, Topic),
+                        Content = COALESCE(@Content, Content),
+                        UpdatedAt = @UpdatedAt
+                    WHERE PassageID = @PassageId";
+                using (var cmd = new SqlCommand(updatePassage, conn, tx))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = (object?)req.Title ?? DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = (object?)req.Level ?? DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@Topic", SqlDbType.NVarChar, 100) { Value = (object?)req.Topic ?? DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@Content", SqlDbType.NVarChar, -1) { Value = (object?)req.PassageContent ?? DBNull.Value });
+                    cmd.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    cmd.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId });
+                    cmd.ExecuteNonQuery();
+                }
+            }
+
+            tx.Commit();
+            return Ok(new { success = true, message = "Quiz updated successfully." });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpDelete("delete/{id}")]
+    public IActionResult DeleteQuiz(string id)
+    {
+        if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var quizId))
+        {
+            return BadRequest(new { success = false, message = "A valid quiz id is required." });
+        }
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+
+            // Get PassageID before deleting Quiz
+            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
+            object? passageIdObj;
+            using (var cmd = new SqlCommand(selectQuiz, conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                passageIdObj = cmd.ExecuteScalar();
+            }
+
+            if (passageIdObj == null)
+            {
+                return NotFound(new { success = false, message = "Quiz not found." });
+            }
+
+            // Delete AIQuizRequest
+            using (var cmd = new SqlCommand("DELETE FROM AIQuizRequest WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete AnswerRecord
+            using (var cmd = new SqlCommand("DELETE FROM AnswerRecord WHERE QuestionID IN (SELECT QuestionID FROM Question WHERE QuizID = @QuizId)", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete QuizAIAnalysis
+            using (var cmd = new SqlCommand("DELETE FROM QuizAIAnalysis WHERE AttemptID IN (SELECT AttemptID FROM QuizAttempt WHERE QuizID = @QuizId)", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete QuizAttempt
+            using (var cmd = new SqlCommand("DELETE FROM QuizAttempt WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete Question
+            using (var cmd = new SqlCommand("DELETE FROM Question WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete QuestionGroup
+            using (var cmd = new SqlCommand("DELETE FROM QuestionGroup WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete Quiz
+            using (var cmd = new SqlCommand("DELETE FROM Quiz WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
+            // Delete ReadingPassage if exists
+            if (passageIdObj != DBNull.Value && Guid.TryParse(passageIdObj.ToString(), out var passageId))
+            {
+                using (var cmd = new SqlCommand("DELETE FROM ReadingPassage WHERE PassageID = @PassageId", conn, tx))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId });
+                    cmd.ExecuteNonQuery();
+                }
+            }
+
+            tx.Commit();
+            return Ok(new { success = true, message = "Quiz deleted successfully." });
         }
         catch (Exception ex)
         {

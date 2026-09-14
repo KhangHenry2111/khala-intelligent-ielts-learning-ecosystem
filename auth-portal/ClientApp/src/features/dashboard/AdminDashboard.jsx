@@ -1,42 +1,42 @@
 import { useAuth } from '../../app/AuthContext';
 
 const adminStats = [
-  { label: 'Người dùng', value: '1,245', tone: 'default' },
-  { label: 'Giáo viên', value: '48', tone: 'default' },
-  { label: 'Phản hồi', value: '17', tone: 'warning' },
-  { label: 'Khóa tài khoản', value: '06', tone: 'danger' },
+  { label: 'Users', value: '1,245', tone: 'default' },
+  { label: 'Teachers', value: '48', tone: 'default' },
+  { label: 'Feedback', value: '17', tone: 'warning' },
+  { label: 'Blocked accounts', value: '06', tone: 'danger' },
 ];
 
 const accountRows = [
-  { name: 'Nguyễn Văn A', role: 'User', status: 'Active', lastSeen: '2 phút trước' },
-  { name: 'Trần Thị B', role: 'Teacher', status: 'Pending', lastSeen: '35 phút trước' },
-  { name: 'Lê Hoàng C', role: 'Admin', status: 'Active', lastSeen: '1 giờ trước' },
-  { name: 'Phạm Mai D', role: 'User', status: 'Suspended', lastSeen: 'Hôm qua' },
+  { name: 'Nguyen Van A', role: 'User', status: 'Active', lastSeen: '2 minutes ago' },
+  { name: 'Tran Thi B', role: 'Teacher', status: 'Pending', lastSeen: '35 minutes ago' },
+  { name: 'Le Hoang C', role: 'Admin', status: 'Active', lastSeen: '1 hour ago' },
+  { name: 'Pham Mai D', role: 'User', status: 'Suspended', lastSeen: 'Yesterday' },
 ];
 
 const feedbackRows = [
-  { title: 'Lỗi đăng nhập trên app mobile', sender: 'Học viên #1024', priority: 'High', status: 'Đang xử lý' },
-  { title: 'Góp ý về bài giảng Speaking', sender: 'Học viên #4102', priority: 'Medium', status: 'Mới' },
-  { title: 'Tài liệu vi phạm chính sách', sender: 'Khiếu nại nội dung', priority: 'High', status: 'Cần duyệt' },
+  { title: 'Login issue on mobile app', sender: 'Student #1024', priority: 'High', status: 'In progress' },
+  { title: 'Feedback on Speaking lesson', sender: 'Student #4102', priority: 'Medium', status: 'New' },
+  { title: 'Policy violation document', sender: 'Content complaint', priority: 'High', status: 'Needs review' },
 ];
 
 const contentRows = [
-  { title: 'IELTS Writing Task 2 - Practice Set', type: 'Bài giảng', reason: 'Sai nội dung đề', status: 'Chờ xử lý' },
-  { title: 'Vocabulary Booster PDF', type: 'Tài liệu', reason: 'Bản quyền', status: 'Đã xoá' },
-  { title: 'Speaking Lesson 08', type: 'Bài giảng', reason: 'Nội dung không phù hợp', status: 'Đang kiểm tra' },
+  { title: 'IELTS Writing Task 2 - Practice Set', type: 'Lesson', reason: 'Incorrect prompt content', status: 'Pending review' },
+  { title: 'Vocabulary Booster PDF', type: 'Document', reason: 'Copyright issue', status: 'Removed' },
+  { title: 'Speaking Lesson 08', type: 'Lesson', reason: 'Inappropriate content', status: 'Under review' },
 ];
 
 const accessRows = [
-  { name: 'Nguyễn Tiến', role: 'Teacher', reason: 'Vi phạm quy định lớp học', action: 'Ban' },
-  { name: 'Phan Huy', role: 'User', reason: 'Spam phản hồi', action: 'Temporarily suspend' },
-  { name: 'Đỗ Lan', role: 'Admin', reason: 'Yêu cầu điều chỉnh quyền', action: 'Review' },
+  { name: 'Nguyen Tien', role: 'Teacher', reason: 'Violation of class rules', action: 'Ban' },
+  { name: 'Phan Huy', role: 'User', reason: 'Spam feedback', action: 'Temporarily suspend' },
+  { name: 'Do Lan', role: 'Admin', reason: 'Permission adjustment request', action: 'Review' },
 ];
 
 const quickActions = [
-  { title: 'Quản lý tài khoản', description: 'Thêm, chỉnh sửa, khóa hoặc xóa thông tin tài khoản người dùng, giáo viên và admin.', accent: 'primary-gradient' },
-  { title: 'Quản lý phản hồi', description: 'Theo dõi yêu cầu góp ý, phản ánh lỗi hoặc vấn đề từ người dùng.', accent: 'secondary-gradient' },
-  { title: 'Quản lý nội dung', description: 'Kiểm tra và xóa bài giảng, tài liệu vi phạm chính sách.', accent: 'dark-gradient' },
-  { title: 'Quản lý quyền truy cập', description: 'Đình chỉ tài khoản khi có phê duyệt theo quy trình quản lý.', accent: 'primary-gradient' },
+  { title: 'Account management', description: 'Add, edit, lock, or remove accounts for users, teachers, and admins.', accent: 'primary-gradient' },
+  { title: 'Feedback management', description: 'Track suggestions, bug reports, and issues raised by users.', accent: 'secondary-gradient' },
+  { title: 'Content management', description: 'Review and remove lessons or documents that violate policy.', accent: 'dark-gradient' },
+  { title: 'Access management', description: 'Suspend accounts after approval through the management workflow.', accent: 'primary-gradient' },
 ];
 
 export function AdminDashboard() {
@@ -48,8 +48,8 @@ export function AdminDashboard() {
       <div className="dashboard-welcome glass-card admin-hero">
         <div>
           <span className="eyebrow">Admin workspace</span>
-          <h1>Xin chào, {name}.</h1>
-          <p>Quản trị hệ thống, giám sát nội dung và duyệt quyền truy cập theo quy trình quản lý.</p>
+          <h1>Welcome, {name}.</h1>
+          <p>Manage the platform, monitor content quality, and review access approvals through the admin workflow.</p>
         </div>
         <div className="mini-stat-group">
           {adminStats.map((item) => (
@@ -76,18 +76,18 @@ export function AdminDashboard() {
       <div className="content-grid admin-main-grid">
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý tài khoản</h2>
-            <button type="button" className="link-btn">+ Tạo giáo viên</button>
+            <h2>Account management</h2>
+            <button type="button" className="link-btn">+ Create teacher</button>
           </div>
 
           <div className="table-wrap">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Tên</th>
-                  <th>Vai trò</th>
-                  <th>Trạng thái</th>
-                  <th>Lần hoạt động</th>
+                  <th>Name</th>
+                  <th>Role</th>
+                  <th>Status</th>
+                  <th>Last active</th>
                 </tr>
               </thead>
               <tbody>
@@ -106,8 +106,8 @@ export function AdminDashboard() {
 
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý phản hồi</h2>
-            <button type="button" className="link-btn">Xem tất cả</button>
+            <h2>Feedback management</h2>
+            <button type="button" className="link-btn">View all</button>
           </div>
 
           <div className="list-stack">
@@ -130,18 +130,18 @@ export function AdminDashboard() {
       <div className="grid-2 mt-30">
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý nội dung</h2>
-            <button type="button" className="link-btn">Kiểm tra</button>
+            <h2>Content management</h2>
+            <button type="button" className="link-btn">Review</button>
           </div>
 
           <div className="table-wrap">
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Tiêu đề</th>
-                  <th>Loại</th>
-                  <th>Lý do</th>
-                  <th>Trạng thái</th>
+                  <th>Title</th>
+                  <th>Type</th>
+                  <th>Reason</th>
+                  <th>Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -150,7 +150,7 @@ export function AdminDashboard() {
                     <td>{row.title}</td>
                     <td>{row.type}</td>
                     <td>{row.reason}</td>
-                    <td><span className={`status-pill ${row.status === 'Đã xoá' ? 'danger' : row.status === 'Đang kiểm tra' ? 'warning' : ''}`}>{row.status}</span></td>
+                    <td><span className={`status-pill ${row.status === 'Removed' ? 'danger' : row.status === 'Under review' ? 'warning' : ''}`}>{row.status}</span></td>
                   </tr>
                 ))}
               </tbody>
@@ -160,8 +160,8 @@ export function AdminDashboard() {
 
         <section className="glass-card">
           <div className="section-head">
-            <h2>Quản lý quyền truy cập</h2>
-            <button type="button" className="link-btn">Duyệt</button>
+            <h2>Access management</h2>
+            <button type="button" className="link-btn">Approve</button>
           </div>
 
           <div className="list-stack">
@@ -183,36 +183,36 @@ export function AdminDashboard() {
 
       <div className="glass-card mt-30 admin-create-teacher">
         <div className="section-head">
-          <h2>Tạo tài khoản giáo viên</h2>
-          <button type="button" className="link-btn">Lưu tài khoản</button>
+          <h2>Create teacher account</h2>
+          <button type="button" className="link-btn">Save account</button>
         </div>
 
         <div className="teacher-form-grid">
           <label>
-            Họ và tên
-            <input type="text" placeholder="Nhập tên giáo viên" />
+            Full name
+            <input type="text" placeholder="Enter teacher name" />
           </label>
           <label>
             Email
             <input type="email" placeholder="teacher@ielts.ai" />
           </label>
           <label>
-            Số điện thoại
+            Phone number
             <input type="tel" placeholder="0987 654 321" />
           </label>
           <label>
-            Chuyên môn
+            Specialization
             <input type="text" placeholder="Speaking / Writing / General" />
           </label>
           <label>
-            Trình độ
+            Qualification
             <input type="text" placeholder="IELTS 8.5 / CELTA" />
           </label>
           <label>
-            Quyền truy cập
+            Access level
             <select defaultValue="teacher">
-              <option value="teacher">Giáo viên</option>
-              <option value="editor">Biên tập nội dung</option>
+              <option value="teacher">Teacher</option>
+              <option value="editor">Content editor</option>
               <option value="reviewer">Reviewer</option>
             </select>
           </label>
