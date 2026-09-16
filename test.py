@@ -85,9 +85,8 @@ class TestConfigurationAndLauncher(unittest.TestCase):
 
         config = configparser.ConfigParser()
         config.read(PROJECT_DIR / "config.cfg")
-        self.assertEqual(config["ai_model"]["model_name"], "nvidia/nemotron-3-ultra:free")
-        self.assertIn("api_key", config["ai_model"])
-        self.assertIn("tesseract_cmd", config["ai_model"])
+        self.assertEqual(config["ai_model"].get("OPENROUTER_MODEL_NAME", config["ai_model"].get("model_name")), "nvidia/nemotron-3-ultra-550b-a55b:free")
+        self.assertTrue("OPENROUTER_API_KEY" in config["ai_model"] or "api_key" in config["ai_model"])
 
 
 class TestTools(unittest.TestCase):

@@ -21,6 +21,9 @@ class IeltsAppLauncher:
 
         # Vì venv đã được import sẵn, dùng interpreter đang chạy app này.
         self.python_exe = sys.executable
+        # venv_python exposes the current interpreter as a Path object (test contract)
+        self.venv_python = Path(sys.executable)
+
 
     def print_banner(self):
         """Print application banner."""

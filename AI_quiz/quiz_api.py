@@ -9,7 +9,7 @@ import sys
 import json
 import logging
 from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import requests
@@ -183,7 +183,7 @@ def save_quiz_json(req: DirectSaveQuizRequest):
 
 
 @app.post("/api/quiz/generate", response_model=GenerateQuizResponse, tags=["Quiz Generation"])
-def generate_quiz(req: GenerateQuizRequest):
+def generate_quiz(req: GenerateQuizRequest, response: Response):
     """
     Step 1 -> Step 5 IELTS Quiz Generation Pipeline:
     - B1: Ingest document (OCR if image).
@@ -192,6 +192,13 @@ def generate_quiz(req: GenerateQuizRequest):
     - B4: Summarizer -> Orchestrator dispatches to tier-appropriate teacher agents.
           Persists to SQL Server via C# backend API with Status = 'Draft' / 'Pending'.
     - B5: Exports to Word (.docx) & Excel (.xlsx) and records to KnowledgeDocument.
+
+    NOTE: the response body always carries `success`/`status` so existing frontend
+    logic that reads those fields keeps working unchanged. The HTTP status code is
+    additionally set to 500 on real system errors (pipeline exception, or a global
+    ERROR status) so monitoring/log tooling that only looks at the status code can
+    also detect failures. Guardrail rejection is a valid business outcome, not a
+    system error, so it intentionally stays 200.
     """
     try:
         logger.info(
@@ -207,7 +214,7 @@ def generate_quiz(req: GenerateQuizRequest):
             quiz_title=req.title
         )
 
-        # Handle Guardrail Failure (B2)
+        # Handle Guardrail Failure (B2) — a valid business rejection, not a system error.
         if not final_state.get("guardrail_passed", False):
             logger.info("[AI TRACE] API RESPONSE: REJECTED at guardrail")
             return GenerateQuizResponse(
@@ -221,6 +228,7 @@ def generate_quiz(req: GenerateQuizRequest):
         # Check Global Error
         if final_state.get("status") == "ERROR":
             logger.info("[AI TRACE] API RESPONSE: ERROR: %s", final_state.get("error_message"))
+            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
             return GenerateQuizResponse(
                 success=False,
                 status="ERROR",
@@ -247,11 +255,12 @@ def generate_quiz(req: GenerateQuizRequest):
             quiz_preview=consolidated
         )
 
+        pipeline_status = final_state.get("status", "SUCCESS")
         result = GenerateQuizResponse(
             success=True,
-            status="SUCCESS",
+            status=pipeline_status,
             step=5,
-            message="Đã tạo đề thi IELTS thành công, lưu database (trạng thái chờ kiểm duyệt) và xuất tài liệu Word/Excel.",
+            message="Đã tạo đề thi IELTS thành công, lưu database (trạng thái chờ kiểm duyệt) và xuất tài liệu Word/Excel." + (" (Chế độ giả lập/mock)" if pipeline_status == "SUCCESS_DEGRADED" else ""),
             data=response_data
         )
         logger.info("[AI TRACE] API RESPONSE JSON: %s", json.dumps(result.model_dump(), ensure_ascii=False, default=str)[:12000])
@@ -259,6 +268,7 @@ def generate_quiz(req: GenerateQuizRequest):
 
     except Exception as ex:
         logger.exception("[AI TRACE] API ERROR")
+        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return GenerateQuizResponse(
             success=False,
             status="ERROR",
