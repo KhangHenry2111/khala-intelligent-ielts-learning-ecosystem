@@ -9,6 +9,15 @@ B4: Summarizer Agent (LLM-driven) & Orchestrator (Tier-based Teacher dispatch)
        prior_results) to avoid duplication and preserve cross-agent context.
     -> Parameterized SQL Sync (Draft / Pending review status)
 B5: Word / Excel Export & Knowledge Base Storage
+
+Reliability notes:
+    - Every node is wrapped by `_node_guard`: if the pipeline has already failed
+      (status == "ERROR") the node is skipped, and any exception raised inside a
+      node is caught, logged, and converted into a normal ERROR state instead of
+      crashing the whole graph.
+    - Every AI-generated answer (raw LLM response + each node's final generated
+      payload) is printed to the console via `_print_ai_answer`, independent of
+      whatever logging configuration the host app uses.
 """
 
 import os
@@ -17,6 +26,7 @@ import json
 import uuid
 import configparser
 import logging
+from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TypedDict, Union
 
@@ -41,6 +51,17 @@ from .tool import (
 from langgraph.graph import StateGraph, END
 
 logger = logging.getLogger("ielts.ai_quiz")
+
+# Ensure this logger always prints somewhere, even if the host app never calls
+# logging.basicConfig(). Without a handler, logger.info(...) is silently dropped
+# by Python's logging defaults (only WARNING+ reaches the "handler of last
+# resort"), so all of the [AI TRACE] calls below were previously invisible.
+if not logger.handlers:
+    _console_handler = logging.StreamHandler()
+    _console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(_console_handler)
+logger.setLevel(logging.INFO)
+logger.propagate = False
 
 
 def _default_tool_params() -> Dict[str, Any]:
@@ -97,6 +118,21 @@ def _trace(label: str, value: Any = None) -> None:
         logger.info("[AI TRACE] %s: %s", label, json.dumps(_trace_safe(value), ensure_ascii=False, default=str))
 
 
+def _print_ai_answer(label: str, content: Any) -> None:
+    """
+    Explicitly print AI-generated content to stdout. This is a plain `print`
+    (not the logger) on purpose, so the generated answer is guaranteed to show
+    up on the console regardless of logging configuration/level.
+    """
+    banner = f" AI ANSWER: {label} "
+    print(f"\n{banner:=^80}")
+    if isinstance(content, (dict, list)):
+        print(json.dumps(_trace_safe(content), ensure_ascii=False, indent=2, default=str))
+    else:
+        print(content)
+    print("=" * 80)
+
+
 class OpenRouterLLM:
     """Small OpenRouter client for the guardrail's OpenAI-compatible endpoint."""
 
@@ -134,7 +170,9 @@ class OpenRouterLLM:
         response.raise_for_status()
         response_json = response.json()
         _trace("MODEL RESPONSE JSON", response_json)
-        return response_json["choices"][0]["message"]["content"]
+        content = response_json["choices"][0]["message"]["content"]
+        _print_ai_answer("Raw LLM response", content)
+        return content
 
 
 def _load_default_llm() -> Optional[OpenRouterLLM]:
@@ -217,6 +255,35 @@ class QuizState(TypedDict):
 
 
 # --------------------------------------------------------------------------
+# Node-level exception guard
+# --------------------------------------------------------------------------
+def _node_guard(node_name: str):
+    """
+    Wrap a node so that:
+      - if the pipeline has already failed (status == "ERROR"), the node is
+        skipped instead of doing (and possibly failing on) more work; and
+      - any unhandled exception raised inside the node is caught, logged, and
+        turned into a normal ERROR state update instead of crashing the whole
+        LangGraph run.
+    """
+    def decorator(fn):
+        @wraps(fn)
+        def wrapper(state: "QuizState") -> Dict[str, Any]:
+            if state.get("status") == "ERROR":
+                return {}
+            try:
+                return fn(state)
+            except Exception as exc:
+                logger.exception("Node '%s' failed", node_name)
+                return {
+                    "status": "ERROR",
+                    "error_message": f"{node_name} failed: {exc}",
+                }
+        return wrapper
+    return decorator
+
+
+# --------------------------------------------------------------------------
 # Helpers: Context Bundle
 # --------------------------------------------------------------------------
 def _build_context_bundle(
@@ -279,6 +346,7 @@ def _compact_prior_context(state: "QuizState") -> str:
 # --------------------------------------------------------------------------
 # Node 1: Ingestion & OCR (B1)
 # --------------------------------------------------------------------------
+@_node_guard("ingest_node")
 def ingest_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: ingest_node", {"input_type": state.get("input_type", "text")})
     raw = state.get("raw_input", "")
@@ -306,6 +374,7 @@ def ingest_node(state: QuizState) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 # Node 2: Guardrail Safety & Relevance (B2)
 # --------------------------------------------------------------------------
+@_node_guard("guardrail_node")
 def guardrail_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: guardrail_check", {"skill": state.get("selected_skill", "Reading")})
     text = state.get("extracted_text", "")
@@ -343,6 +412,8 @@ def guardrail_node(state: QuizState) -> Dict[str, Any]:
 
 
 def should_continue_after_guardrail(state: QuizState) -> str:
+    if state.get("status") == "ERROR":
+        return END
     if state.get("guardrail_passed", False):
         return "preprocess_node"
     return END
@@ -351,6 +422,7 @@ def should_continue_after_guardrail(state: QuizState) -> str:
 # --------------------------------------------------------------------------
 # Node 3: Clean Text / Data Preprocessing (B3)
 # --------------------------------------------------------------------------
+@_node_guard("preprocess_node")
 def preprocess_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: clean_text")
     text = state.get("extracted_text", "")
@@ -411,6 +483,7 @@ def _heuristic_key_concepts(text: str, topic: str) -> List[str]:
     return concepts
 
 
+@_node_guard("summarizer_node")
 def summarizer_node(state: QuizState) -> Dict[str, Any]:
     """
     LLM-driven summarizer: extracts summary, topic, target_level, and key_concepts.
@@ -489,6 +562,14 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
         prior_results={},
     )
 
+    _print_ai_answer("Summarizer output (summary / topic / level / key concepts)", {
+        "summary": summary,
+        "topic": topic,
+        "target_level": target_level,
+        "key_concepts": key_concepts,
+        "used_fallback": used_fallback,
+    })
+
     return {
         "summary": summary,
         "detected_topic": topic,
@@ -502,6 +583,7 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 # Node 5: Orchestrator Agent (B4 - Tier & Skill Routing)
 # --------------------------------------------------------------------------
+@_node_guard("orchestrator_node")
 def orchestrator_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: orchestrator_node")
     selected_skill = state.get("selected_skill", "Reading").strip()
@@ -926,6 +1008,7 @@ def _fallback_listening_questions(topic: str) -> List[Dict[str, Any]]:
 # Teacher Nodes
 # --------------------------------------------------------------------------
 
+@_node_guard("reading_teacher_node")
 def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Reading test using LLM with context; falls back to heuristic questions."""
     _trace("TOOL CALLED: reading_teacher_node")
@@ -937,17 +1020,16 @@ def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
         safe_text = (_state.get("cleaned_text") or "").strip()
         _topic = _state.get("detected_topic", "General Academic")
         _level = _state.get("target_level", "Band 7.0 - 7.5")
-        questions = _fallback_reading_questions(safe_text, _topic)
         payload = {
             "Title": f"IELTS Reading: {_topic}",
             "Skill": "Reading",
             "Level": _level,
             "Passage": {
                 "Title": f"Academic Reading: {_topic}",
-                "Content": safe_text or f"This passage examines key aspects of {_topic} from an academic perspective.",
+                "Content": f"Please generate a complete IELTS Academic Reading passage (Word count: ~700-900 words) about {_topic}.",
                 "Topic": _topic,
                 "Level": "Academic",
-                "WordCount": len((safe_text or "").split())
+                "WordCount": 800
             },
             "QuestionGroups": [
                 {
@@ -956,7 +1038,7 @@ def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
                     "Instruction": "Choose the best answer A, B, C, or D based on the passage.",
                     "WordLimit": None,
                     "OrderIndex": 1,
-                    "Questions": questions,
+                    "Questions": [{"Content": f"Please generate 13-14 IELTS reading comprehension questions based on the passage."}],
                 }
             ],
         }
@@ -973,9 +1055,12 @@ def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
         "question_count": sum(len(g.get("Questions", [])) for g in groups),
     }
 
+    _print_ai_answer("Reading teacher output", payload)
+
     return {"reading_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
 
 
+@_node_guard("speaking_teacher_node")
 def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Speaking test (Parts 1-3) using LLM with context."""
     _trace("TOOL CALLED: speaking_teacher_node")
@@ -990,8 +1075,8 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
             first = search_results[0]
             if isinstance(first, dict) and first.get("url"):
                 web_source = first["url"]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("search_web_tool failed for Speaking topic '%s': %s", topic, exc)
 
     def fallback_factory(_state):
         _topic = _state.get("detected_topic", "General Academic")
@@ -1002,39 +1087,19 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
             "Level": _level,
             "WebSource": web_source,
             "Part1": [
-                f"How interested are you in {_topic}?",
-                f"Do you think {_topic} affects daily life? Why?",
-                f"Have you ever studied or read about {_topic}?",
-                f"What do most people in your country think about {_topic}?",
+                f"Please generate 4-5 IELTS Speaking Part 1 questions about {_topic}."
             ],
             "Part2_CueCard": (
-                f"Describe an experience or situation related to {_topic}.\n"
-                f"You should say:\n"
-                f" - what it was\n"
-                f" - when and where it happened\n"
-                f" - why it was significant to you\n"
-                f"And explain what you learned from it."
+                f"Please generate an IELTS Speaking Part 2 Cue Card about {_topic}, including bullet points."
             ),
             "Part2_Sample": (
-                f"I'd like to talk about an experience I had related to {_topic}. "
-                f"It happened a few years ago when I was studying for my exams. "
-                f"I came across a comprehensive article on {_topic} that really opened my eyes. "
-                f"The key insight was that understanding {_topic} requires both theoretical knowledge and practical application. "
-                f"Since then, I've tried to keep up with the latest developments in this area, "
-                f"and I believe it has significantly enriched my understanding of the world around me."
+                f"Please generate a Band 8.0+ sample answer for the Part 2 Cue Card about {_topic}."
             ),
             "Part3": [
-                f"In what ways do you think {_topic} will change in the next decade?",
-                f"Do governments have a responsibility to address issues related to {_topic}?",
-                f"How does {_topic} differ across different cultures or countries?",
-                f"Some people argue that {_topic} has both benefits and drawbacks. Do you agree?",
+                f"Please generate 4-5 IELTS Speaking Part 3 questions related to {_topic}."
             ],
             "Vocabulary": [
-                {"term": "pivotal", "meaning": "of crucial importance; central"},
-                {"term": "encompass", "meaning": "to include or contain within itself"},
-                {"term": "nuanced", "meaning": "characterized by subtle shades of meaning"},
-                {"term": "proliferate", "meaning": "to increase rapidly in number"},
-                {"term": "paradigm shift", "meaning": "a fundamental change in approach or assumptions"},
+                {"term": "Please generate 5-10 advanced vocabulary words related to the topic", "meaning": "along with their meanings"}
             ],
         }
         return _normalize_backend_payload("Speaking", payload, _state.get("cleaned_text", ""), _topic, _level)
@@ -1053,10 +1118,13 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
         "cue_card": payload.get("Part2_CueCard", "")[:100],
     }
 
+    _print_ai_answer("Speaking teacher output", payload)
+
     return {"speaking_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
 
 
 
+@_node_guard("writing_teacher_node")
 def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Writing test (Task 1 & 2) using LLM with context."""
     _trace("TOOL CALLED: writing_teacher_node")
@@ -1080,41 +1148,20 @@ def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
             "WritingSection": {
                 "Task1": {
                     "Prompt": (
-                        f"The bar chart below shows the growth trends related to {_topic} "
-                        f"between 2015 and 2024. Summarize the information by selecting and "
-                        f"reporting the main features, and make comparisons where relevant."
+                        f"Please generate an IELTS Writing Task 1 prompt based on the provided chart about {_topic}."
                     ),
                     "ChartImagePath": chart_path,
                     "ModelAnswer": (
-                        f"The bar chart illustrates the growth trends associated with {_topic} "
-                        f"over a nine-year period from 2015 to 2024. Overall, there was a significant "
-                        f"and consistent upward trend throughout the period. "
-                        f"In 2015, the growth rate stood at approximately 20%, which rose steadily to 35% by 2018. "
-                        f"This upward momentum continued into 2021, reaching 55%, before peaking at 72% in 2024. "
-                        f"The most notable increase occurred between 2021 and 2024, suggesting an acceleration "
-                        f"in developments related to {_topic} in recent years."
+                        f"Please write a complete, high-scoring IELTS Task 1 model answer (Band 8.0+) describing the chart about {_topic}."
                     ),
                 },
                 "Task2": {
                     "Prompt": (
-                        f"Some people believe that {_topic} brings more benefits than drawbacks to modern society, "
-                        f"while others argue the opposite. "
-                        f"Discuss both views and give your own opinion."
+                        f"Please generate an IELTS Writing Task 2 prompt about {_topic}."
                     ),
                     "ModelEssay": (
-                        f"The role of {_topic} in contemporary society has sparked considerable debate. "
-                        f"While proponents argue that it offers substantial advantages, critics highlight "
-                        f"potential drawbacks that cannot be overlooked.\n\n"
-                        f"On the one hand, {_topic} has undeniably transformed various aspects of modern life. "
-                        f"It has enhanced efficiency, broadened access to information, and created new opportunities "
-                        f"for economic and social development. Many experts contend that embracing this trend "
-                        f"is essential for remaining competitive in a rapidly changing world.\n\n"
-                        f"On the other hand, critics point to significant challenges. These include concerns about "
-                        f"equity, the risk of dependency, and potential negative impacts on employment and traditional values. "
-                        f"Without careful regulation, the benefits may only accrue to a privileged few.\n\n"
-                        f"In conclusion, while {_topic} presents undeniable benefits, its drawbacks require serious "
-                        f"consideration. A balanced, evidence-based approach — combining innovation with strong "
-                        f"governance — appears to be the most prudent path forward."
+                        f"Please write a complete, high-scoring IELTS Task 2 model essay (Band 8.0+) about {_topic}. "
+                        f"Ensure the essay has an introduction, 2-3 body paragraphs, and a conclusion."
                     ),
                 },
             },
@@ -1132,9 +1179,12 @@ def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
         "task2_prompt": (ws.get("Task2") or {}).get("Prompt", "")[:100],
     }
 
+    _print_ai_answer("Writing teacher output", payload)
+
     return {"writing_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
 
 
+@_node_guard("listening_teacher_node")
 def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Listening section using LLM with context; falls back to heuristic questions."""
     _trace("TOOL CALLED: listening_teacher_node")
@@ -1145,27 +1195,13 @@ def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
     def fallback_factory(_state):
         _topic = _state.get("detected_topic", "Higher Education and Innovation")
         _level = _state.get("target_level", "Band 7.0 - 8.0")
-        transcript = (
-            f"[Audio Transcript — {_topic}]\n\n"
-            f"Host: Welcome to today's program. We'll be discussing the fascinating topic of {_topic}. "
-            f"Joining me is Dr. Nguyen, an expert in this field.\n\n"
-            f"Dr. Nguyen: Thank you. {_topic} is truly one of the most significant areas of study today. "
-            f"Research has shown that understanding {_topic} requires a multi-disciplinary approach, "
-            f"drawing on insights from science, policy, and social dynamics.\n\n"
-            f"Host: Can you elaborate on the key challenges in this area?\n\n"
-            f"Dr. Nguyen: Certainly. The primary challenges include resource allocation, public awareness, "
-            f"and the need for international cooperation. Without addressing these, progress will remain limited.\n\n"
-            f"Host: What do you recommend for students wanting to learn more?\n\n"
-            f"Dr. Nguyen: I always advise students to read peer-reviewed research, engage with case studies, "
-            f"and participate in community discussions. Active engagement is the best way to develop a "
-            f"nuanced understanding of {_topic}."
-        )
-        questions = _fallback_listening_questions(_topic)
         payload = {
             "Title": f"IELTS Listening: {_topic}",
             "Skill": "Listening",
             "Level": _level,
-            "ListeningSection": {"Transcript": transcript},
+            "ListeningSection": {
+                "Transcript": f"Please generate a complete IELTS Listening transcript (4 parts) about {_topic}."
+            },
             "QuestionGroups": [
                 {
                     "QuestionTypeID": 1,
@@ -1173,7 +1209,7 @@ def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
                     "Instruction": "Listen to the audio and choose the best answer.",
                     "WordLimit": None,
                     "OrderIndex": 1,
-                    "Questions": questions,
+                    "Questions": [{"Content": f"Please generate 40 IELTS listening questions based on the transcript."}],
                 }
             ],
         }
@@ -1190,12 +1226,15 @@ def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
         "question_count": sum(len(g.get("Questions", [])) for g in groups),
     }
 
+    _print_ai_answer("Listening teacher output", payload)
+
     return {"listening_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
 
 
 # --------------------------------------------------------------------------
 # Node 7: Consolidation & Backend Parameterized SQL Sync (B4)
 # --------------------------------------------------------------------------
+@_node_guard("backend_sync_node")
 def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     """
     Consolidate results from all executed teachers into a single payload,
@@ -1259,6 +1298,7 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 # Node 8: Document Export & Knowledge Base Storage (B5)
 # --------------------------------------------------------------------------
+@_node_guard("export_knowledge_node")
 def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
     """
     Exports the generated test into Word (.docx) and Excel (.xlsx),
@@ -1477,6 +1517,17 @@ def run_quiz_pipeline(
         "used_fallback": False
     }
 
-    final_state = quiz_app.invoke(initial_state)
+    try:
+        final_state = quiz_app.invoke(initial_state)
+    except Exception as exc:
+        # Last-resort catch-all: covers anything raised outside the individual
+        # node guards (e.g. a routing function, or LangGraph itself).
+        logger.exception("Pipeline crashed outside node-level guards")
+        final_state = {
+            **initial_state,
+            "status": "ERROR",
+            "error_message": f"Pipeline crashed: {exc}",
+        }
+
     _trace("PIPELINE END", {"status": final_state.get("status"), "allocated_teachers": final_state.get("allocated_teachers")})
     return final_state
