@@ -4,10 +4,10 @@ Orchestrates the 5-step IELTS Quiz Generation Pipeline:
 B1: Ingest & OCR
 B2: Guardrails (Safety & Relevance)
 B3: Data Preprocessing (Cleaning)
-B4: Summarizer Agent (LLM-driven) & Orchestrator (Tier-based Teacher dispatch)
+B4: Summarizer Agent (LLM-driven) & Orchestrator (package-based Teacher dispatch)
     -> Each teacher receives a shared context_bundle (summary, topic, key_concepts,
        prior_results) to avoid duplication and preserve cross-agent context.
-    -> Parameterized SQL Sync (Draft / Pending review status)
+    -> Backend sync (POST to C# API; Draft status)
 B5: Word / Excel Export & Knowledge Base Storage
 
 Reliability notes:
@@ -15,6 +15,10 @@ Reliability notes:
       (status == "ERROR") the node is skipped, and any exception raised inside a
       node is caught, logged, and converted into a normal ERROR state instead of
       crashing the whole graph.
+    - Teacher nodes never fall back to placeholder content: if the LLM fails after
+      retries the pipeline ends with status "ERROR" and nothing is persisted.
+    - Skill access is decided by `allowed_skills` (computed by the backend from the
+      user's Package), not by the caller-supplied `user_tier`.
     - Every AI-generated answer (raw LLM response + each node's final generated
       payload) is printed to the console via `_print_ai_answer`, independent of
       whatever logging configuration the host app uses.
@@ -40,7 +44,6 @@ from .tool import (
     clean_text,
     extract_document_text,
     search_web_tool,
-    generate_writing_chart,
     post_to_sql_backend,
     export_to_word,
     export_to_excel,
@@ -82,6 +85,8 @@ def _default_tool_params() -> Dict[str, Any]:
         "backend_url": (os.getenv("IELTS_SAVE_QUIZ_URL") or backend_cfg.get("save_quiz_url") or backend_cfg.get("base_url") or "http://localhost:5000/api/quiz/save").strip(),
         "knowledge_url": (os.getenv("IELTS_SAVE_KNOWLEDGE_URL") or backend_cfg.get("save_knowledge_url") or "http://localhost:5000/api/quiz/knowledge").strip(),
         "search_url": os.getenv("IELTS_SEARCH_URL", "https://www.bing.com/search"),
+        # Only the directory of these paths is used by export_knowledge_node;
+        # the file name is generated per run to avoid collisions between users.
         "word_output_path": os.getenv("IELTS_WORD_OUTPUT_PATH", str(Path(export_dir) / "ielts_quiz_output.docx")),
         "excel_output_path": os.getenv("IELTS_EXCEL_OUTPUT_PATH", str(Path(export_dir) / "ielts_quiz_output.xlsx")),
         "chart_output_path": os.getenv("IELTS_CHART_OUTPUT_PATH", str(Path(charts_dir) / "writing_chart.png")),
@@ -205,9 +210,10 @@ def _load_default_llm() -> Optional[OpenRouterLLM]:
 class QuizState(TypedDict):
     # Inputs
     raw_input: Union[str, bytes]
-    input_type: str                  # "text" | "image"
+    input_type: str                  # "text" | "image" | "pdf"
     selected_skill: str              # "Reading" | "Speaking" | "Writing" | "Listening" | "All"
-    user_tier: str                   # "Bronze" | "Silver" | "Gold" | "Đồng" | "Bạc" | "Vàng"
+    user_tier: str                   # Informational only (prompt context); NOT used for access control
+    allowed_skills: List[str]        # Skills the user's Package allows (computed by backend)
     user_id: Optional[str]
     quiz_title: Optional[str]
     llm: Any
@@ -251,7 +257,7 @@ class QuizState(TypedDict):
     # Global status
     status: str                      # "SUCCESS" | "REJECTED" | "ERROR" | "SUCCESS_DEGRADED"
     error_message: Optional[str]
-    used_fallback: bool
+    used_fallback: bool              # True only when the summarizer fell back to heuristics
 
 
 # --------------------------------------------------------------------------
@@ -284,8 +290,15 @@ def _node_guard(node_name: str):
 
 
 # --------------------------------------------------------------------------
-# Helpers: Context Bundle
+# Helpers: Level mapping, Context Bundle
 # --------------------------------------------------------------------------
+def _band_to_level(level: str) -> str:
+    """'Band 7.0 - 7.5 (...)' -> Beginner | Intermediate | Advanced (matches DB CHECK constraints)."""
+    m = re.search(r"\d+(?:\.\d+)?", level or "")
+    band = float(m.group()) if m else 6.5
+    return "Beginner" if band < 6.0 else "Intermediate" if band < 7.0 else "Advanced"
+
+
 def _build_context_bundle(
     summary: str,
     topic: str,
@@ -352,12 +365,15 @@ def ingest_node(state: QuizState) -> Dict[str, Any]:
     raw = state.get("raw_input", "")
     itype = state.get("input_type", "text").lower()
 
-    if itype == "image" or isinstance(raw, bytes) or (isinstance(raw, str) and (raw.endswith(".png") or raw.endswith(".jpg") or raw.startswith("data:image"))):
+    # raw must be content (bytes / data URL / plain text) — never a file path or URL.
+    is_image = itype == "image" or (isinstance(raw, str) and raw.startswith("data:image"))
+
+    if is_image:
         extracted = ocr_image_to_text(raw)
-    elif itype == "pdf" or (isinstance(raw, str) and (raw.lower().endswith(".pdf") or raw.startswith("data:application/pdf") or raw.startswith("http") and raw.lower().endswith(".pdf"))):
-        extracted = extract_document_text(raw, file_type="pdf", file_name=str(state.get("raw_input_name") or "document.pdf"))
     else:
-        extracted = extract_document_text(raw, file_type=itype, file_name=str(state.get("raw_input_name") or ""))
+        extracted = extract_document_text(
+            raw, file_type=itype, file_name=str(state.get("raw_input_name") or "")
+        )
 
     _trace("OCR RESULT", {
         "characters": len(extracted),
@@ -581,32 +597,37 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Node 5: Orchestrator Agent (B4 - Tier & Skill Routing)
+# Node 5: Orchestrator Agent (B4 - Package-based Skill Routing)
 # --------------------------------------------------------------------------
+_ALL_SKILLS = ["Reading", "Listening", "Speaking", "Writing"]
+
+
 @_node_guard("orchestrator_node")
 def orchestrator_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: orchestrator_node")
-    selected_skill = state.get("selected_skill", "Reading").strip()
-    tier_raw = state.get("user_tier", "Gold").lower()
+    selected = state.get("selected_skill", "Reading").strip()
+    # Least privilege by default; the backend passes the real entitlement from Package.
+    allowed = set(state.get("allowed_skills") or ["Reading", "Listening"])
 
-    is_bronze = any(b in tier_raw for b in ["bronze", "đồng", "dong"])
-
-    # Map skill selection
-    if selected_skill.lower() in ["all", "toàn bộ", "toan bo"]:
-        if is_bronze:
-            # Bronze users get Reading & Listening
-            teachers = ["Reading", "Listening"]
-        else:
-            # Silver and Gold get All 4 skills
-            teachers = ["Reading", "Listening", "Speaking", "Writing"]
+    if selected.lower() in ("all", "toàn bộ", "toan bo"):
+        requested = _ALL_SKILLS
     else:
-        # User selected 1 specific skill
-        norm_skill = "Reading"
-        for s in ["Reading", "Speaking", "Writing", "Listening"]:
-            if s.lower() in selected_skill.lower():
-                norm_skill = s
-                break
-        teachers = [norm_skill]
+        match = next((s for s in _ALL_SKILLS if s.lower() in selected.lower()), None)
+        if match is None:
+            return {
+                "allocated_teachers": [],
+                "status": "ERROR",
+                "error_message": f"Unknown skill: '{selected}'",
+            }
+        requested = [match]
+
+    teachers = [s for s in requested if s in allowed]
+    if not teachers:
+        return {
+            "allocated_teachers": [],
+            "status": "ERROR",
+            "error_message": f"Skill '{selected}' is not included in the user's package.",
+        }
 
     return {
         "allocated_teachers": teachers
@@ -861,19 +882,19 @@ def _build_skill_prompt(
 
 
 # --------------------------------------------------------------------------
-# Core LLM Generation with Context
+# Core LLM Generation with Context (no placeholder fallback)
 # --------------------------------------------------------------------------
 
-def _generate_llm_skill_payload(
-    state: QuizState,
-    skill_name: str,
-    fallback_factory,
-) -> tuple[Dict[str, Any], bool]:
+def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, Any]:
     """
     Call the LLM with a context-aware prompt for the given skill.
-    Falls back to fallback_factory if LLM is unavailable or fails.
+    Raises RuntimeError if the LLM is unavailable or fails after 3 attempts;
+    `_node_guard` turns that into status == "ERROR" so nothing is persisted.
     """
     llm = state.get("llm")
+    if llm is None:
+        raise RuntimeError("LLM is not configured; cannot generate quiz content.")
+
     topic = state.get("detected_topic", "General Academic")
     source_text = state.get("cleaned_text", "")
     target_level = state.get("target_level", "Band 7.0 - 7.5")
@@ -889,119 +910,37 @@ def _generate_llm_skill_payload(
         prior_results={},
     )
 
-    # Build prior context string from already-generated teacher results
-    prior_context_str = _compact_prior_context(state)
+    prompt = _build_skill_prompt(skill_name, context_bundle, _compact_prior_context(state))
 
-    # Build the context-aware prompt
-    prompt = _build_skill_prompt(skill_name, context_bundle, prior_context_str)
+    last_exc: Optional[Exception] = None
+    for attempt in range(3):
+        try:
+            raw_payload = tool._invoke_llm(
+                llm,
+                prompt,
+                skill=skill_name,
+                topic=topic,
+                source_text=source_text,
+                target_level=target_level,
+                user_tier=state.get("user_tier", "Gold"),
+            )
+            parsed = _parse_llm_json_payload(raw_payload)
+            result = _normalize_backend_payload(skill_name, parsed, source_text, topic, target_level)
+            _trace(f"LLM {skill_name.upper()} RESULT", {
+                "title": result.get("Title"),
+                "question_count": sum(
+                    len(g.get("Questions", []))
+                    for g in result.get("QuestionGroups", [])
+                ) if "QuestionGroups" in result else "N/A"
+            })
+            return result
+        except Exception as exc:
+            last_exc = exc
+            logger.warning("LLM generation failed for %s (attempt %d/3): %s", skill_name, attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(2)
 
-    used_fallback = state.get("used_fallback", False)
-    if llm is not None:
-        for attempt in range(3):
-            try:
-                raw_payload = tool._invoke_llm(
-                    llm,
-                    prompt,
-                    skill=skill_name,
-                    topic=topic,
-                    source_text=source_text,
-                    target_level=target_level,
-                    user_tier=state.get("user_tier", "Gold"),
-                )
-                parsed = _parse_llm_json_payload(raw_payload)
-                result = _normalize_backend_payload(skill_name, parsed, source_text, topic, target_level)
-                _trace(f"LLM {skill_name.upper()} RESULT", {
-                    "title": result.get("Title"),
-                    "question_count": sum(
-                        len(g.get("Questions", []))
-                        for g in result.get("QuestionGroups", [])
-                    ) if "QuestionGroups" in result else "N/A"
-                })
-                return result, used_fallback
-            except Exception as exc:
-                if attempt < 2:
-                    logger.warning("LLM generation failed for %s (attempt %d/3); retrying: %s", skill_name, attempt + 1, exc)
-                    time.sleep(2)
-                else:
-                    logger.warning("LLM generation failed for %s after 3 attempts; using fallback: %s", skill_name, exc)
-                    used_fallback = True
-    else:
-        used_fallback = True
-
-    return fallback_factory(state), used_fallback
-
-
-# --------------------------------------------------------------------------
-# Fallback Factories — Generate real questions, not empty arrays
-# --------------------------------------------------------------------------
-
-def _fallback_extract_sentences(text: str, max_sentences: int = 6) -> List[str]:
-    """Extract meaningful sentences from source text for fallback question generation."""
-    sentences = [s.strip() for s in re.split(r"[.!?]+", text) if len(s.strip()) > 30]
-    return sentences[:max_sentences]
-
-
-def _fallback_reading_questions(source_text: str, topic: str) -> List[Dict[str, Any]]:
-    """Generate real MCQ questions from source text sentences as a non-LLM fallback."""
-    sentences = _fallback_extract_sentences(source_text, 5)
-    questions = []
-    for idx, sentence in enumerate(sentences[:4]):
-        # Create a fill-in-the-blank or paraphrase question from the sentence
-        words = sentence.split()
-        if len(words) < 6:
-            continue
-        # Mask the last meaningful word as the answer hint
-        answer_word = words[-1].rstrip(".,;:")
-        blank_sentence = " ".join(words[:-1]) + " ___"
-        questions.append({
-            "QuestionType": "MULTIPLE_CHOICE_SINGLE",
-            "QuestionTypeID": 1,
-            "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-            "Content": f"According to the passage, which word best completes the following: \"{blank_sentence}\"?",
-            "Options": f"A. {answer_word} | B. however | C. therefore | D. although",
-            "CorrectAnswer": "A",
-            "Explanation": f"The passage states: \"{sentence}\", so '{answer_word}' is the correct completion.",
-            "OrderIndex": idx + 1,
-        })
-    # Always return at least 1 question
-    if not questions:
-        questions.append({
-            "QuestionType": "MULTIPLE_CHOICE_SINGLE",
-            "QuestionTypeID": 1,
-            "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-            "Content": f"What is the main theme of the passage about {topic}?",
-            "Options": f"A. {topic} | B. Global economics | C. Sports and leisure | D. Historical architecture",
-            "CorrectAnswer": "A",
-            "Explanation": f"The passage is centered on the topic of {topic}.",
-            "OrderIndex": 1,
-        })
-    return questions
-
-
-def _fallback_listening_questions(topic: str) -> List[Dict[str, Any]]:
-    """Generate listening comprehension questions as a non-LLM fallback."""
-    return [
-        {
-            "QuestionType": "MULTIPLE_CHOICE_SINGLE",
-            "QuestionTypeID": 1,
-            "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-            "Content": f"What is the main topic discussed in the audio recording?",
-            "Options": f"A. {topic} | B. Weather forecasting | C. Sports events | D. Cooking techniques",
-            "CorrectAnswer": "A",
-            "Explanation": f"The audio recording focuses on the subject of {topic}.",
-            "OrderIndex": 1,
-        },
-        {
-            "QuestionType": "MULTIPLE_CHOICE_SINGLE",
-            "QuestionTypeID": 1,
-            "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-            "Content": "What does the speaker suggest as the most important factor?",
-            "Options": "A. Research and evidence | B. Personal opinion | C. Traditional methods | D. Historical data",
-            "CorrectAnswer": "A",
-            "Explanation": "The speaker emphasizes research and evidence as the foundation of their argument.",
-            "OrderIndex": 2,
-        },
-    ]
+    raise RuntimeError(f"{skill_name} generation failed after 3 attempts: {last_exc}")
 
 
 # --------------------------------------------------------------------------
@@ -1010,41 +949,10 @@ def _fallback_listening_questions(topic: str) -> List[Dict[str, Any]]:
 
 @_node_guard("reading_teacher_node")
 def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Reading test using LLM with context; falls back to heuristic questions."""
+    """Generate a full Reading test using LLM with context."""
     _trace("TOOL CALLED: reading_teacher_node")
-    topic = state.get("detected_topic", "General Academic")
-    source_text = state.get("cleaned_text", "")
-    target_level = state.get("target_level", "Band 7.0 - 7.5")
 
-    def fallback_factory(_state):
-        safe_text = (_state.get("cleaned_text") or "").strip()
-        _topic = _state.get("detected_topic", "General Academic")
-        _level = _state.get("target_level", "Band 7.0 - 7.5")
-        payload = {
-            "Title": f"IELTS Reading: {_topic}",
-            "Skill": "Reading",
-            "Level": _level,
-            "Passage": {
-                "Title": f"Academic Reading: {_topic}",
-                "Content": f"Please generate a complete IELTS Academic Reading passage (Word count: ~700-900 words) about {_topic}.",
-                "Topic": _topic,
-                "Level": "Academic",
-                "WordCount": 800
-            },
-            "QuestionGroups": [
-                {
-                    "QuestionTypeID": 1,
-                    "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-                    "Instruction": "Choose the best answer A, B, C, or D based on the passage.",
-                    "WordLimit": None,
-                    "OrderIndex": 1,
-                    "Questions": [{"Content": f"Please generate 13-14 IELTS reading comprehension questions based on the passage."}],
-                }
-            ],
-        }
-        return _normalize_backend_payload("Reading", payload, safe_text, _topic, _level)
-
-    payload, used_fallback = _generate_llm_skill_payload(state, "Reading", fallback_factory)
+    payload = _generate_llm_skill_payload(state, "Reading")
 
     # Update context_bundle with reading results for downstream teachers
     bundle = dict(state.get("context_bundle") or {})
@@ -1057,7 +965,7 @@ def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
 
     _print_ai_answer("Reading teacher output", payload)
 
-    return {"reading_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
+    return {"reading_result": payload, "context_bundle": bundle}
 
 
 @_node_guard("speaking_teacher_node")
@@ -1065,7 +973,6 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Speaking test (Parts 1-3) using LLM with context."""
     _trace("TOOL CALLED: speaking_teacher_node")
     topic = state.get("detected_topic", "General Academic")
-    target_level = state.get("target_level", "Band 7.5 - 8.5")
 
     # Fetch a web source for the speaking topic to enrich content
     web_source = "Generated from source material"
@@ -1078,33 +985,7 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
     except Exception as exc:
         logger.warning("search_web_tool failed for Speaking topic '%s': %s", topic, exc)
 
-    def fallback_factory(_state):
-        _topic = _state.get("detected_topic", "General Academic")
-        _level = _state.get("target_level", "Band 7.5 - 8.5")
-        payload = {
-            "Title": f"IELTS Speaking: {_topic}",
-            "Skill": "Speaking",
-            "Level": _level,
-            "WebSource": web_source,
-            "Part1": [
-                f"Please generate 4-5 IELTS Speaking Part 1 questions about {_topic}."
-            ],
-            "Part2_CueCard": (
-                f"Please generate an IELTS Speaking Part 2 Cue Card about {_topic}, including bullet points."
-            ),
-            "Part2_Sample": (
-                f"Please generate a Band 8.0+ sample answer for the Part 2 Cue Card about {_topic}."
-            ),
-            "Part3": [
-                f"Please generate 4-5 IELTS Speaking Part 3 questions related to {_topic}."
-            ],
-            "Vocabulary": [
-                {"term": "Please generate 5-10 advanced vocabulary words related to the topic", "meaning": "along with their meanings"}
-            ],
-        }
-        return _normalize_backend_payload("Speaking", payload, _state.get("cleaned_text", ""), _topic, _level)
-
-    payload, used_fallback = _generate_llm_skill_payload(state, "Speaking", fallback_factory)
+    payload = _generate_llm_skill_payload(state, "Speaking")
 
     # Ensure the web source from search is preserved in the final payload
     if web_source != "Generated from source material":
@@ -1120,55 +1001,15 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
 
     _print_ai_answer("Speaking teacher output", payload)
 
-    return {"speaking_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
-
+    return {"speaking_result": payload, "context_bundle": bundle}
 
 
 @_node_guard("writing_teacher_node")
 def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
     """Generate a full Writing test (Task 1 & 2) using LLM with context."""
     _trace("TOOL CALLED: writing_teacher_node")
-    topic = state.get("detected_topic", "Technology and Education")
-    tool_params = _resolve_tool_params(state.get("tool_params"))
 
-    def fallback_factory(_state):
-        _topic = _state.get("detected_topic", "Technology and Education")
-        _level = _state.get("target_level", "Band 8.0+")
-        chart_path = generate_writing_chart(
-            "bar",
-            title=f"Data Trends for {_topic}",
-            x_labels=["2015", "2018", "2021", "2024"],
-            series_data={"Growth (%)": [20, 35, 55, 72]},
-            output_path=tool_params.get("chart_output_path") or str(Path(__file__).resolve().parents[1] / "exports" / "charts" / "writing_chart.png")
-        )
-        payload = {
-            "Title": f"IELTS Writing: {_topic}",
-            "Skill": "Writing",
-            "Level": _level,
-            "WritingSection": {
-                "Task1": {
-                    "Prompt": (
-                        f"Please generate an IELTS Writing Task 1 prompt based on the provided chart about {_topic}."
-                    ),
-                    "ChartImagePath": chart_path,
-                    "ModelAnswer": (
-                        f"Please write a complete, high-scoring IELTS Task 1 model answer (Band 8.0+) describing the chart about {_topic}."
-                    ),
-                },
-                "Task2": {
-                    "Prompt": (
-                        f"Please generate an IELTS Writing Task 2 prompt about {_topic}."
-                    ),
-                    "ModelEssay": (
-                        f"Please write a complete, high-scoring IELTS Task 2 model essay (Band 8.0+) about {_topic}. "
-                        f"Ensure the essay has an introduction, 2-3 body paragraphs, and a conclusion."
-                    ),
-                },
-            },
-        }
-        return _normalize_backend_payload("Writing", payload, _state.get("cleaned_text", ""), _topic, _level)
-
-    payload, used_fallback = _generate_llm_skill_payload(state, "Writing", fallback_factory)
+    payload = _generate_llm_skill_payload(state, "Writing")
 
     # Update context_bundle for downstream teachers
     bundle = dict(state.get("context_bundle") or {})
@@ -1181,41 +1022,15 @@ def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
 
     _print_ai_answer("Writing teacher output", payload)
 
-    return {"writing_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
+    return {"writing_result": payload, "context_bundle": bundle}
 
 
 @_node_guard("listening_teacher_node")
 def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Listening section using LLM with context; falls back to heuristic questions."""
+    """Generate a full Listening section using LLM with context."""
     _trace("TOOL CALLED: listening_teacher_node")
-    topic = state.get("detected_topic", "Higher Education and Innovation")
-    source_text = state.get("cleaned_text", "")
-    target_level = state.get("target_level", "Band 7.0 - 8.0")
 
-    def fallback_factory(_state):
-        _topic = _state.get("detected_topic", "Higher Education and Innovation")
-        _level = _state.get("target_level", "Band 7.0 - 8.0")
-        payload = {
-            "Title": f"IELTS Listening: {_topic}",
-            "Skill": "Listening",
-            "Level": _level,
-            "ListeningSection": {
-                "Transcript": f"Please generate a complete IELTS Listening transcript (4 parts) about {_topic}."
-            },
-            "QuestionGroups": [
-                {
-                    "QuestionTypeID": 1,
-                    "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
-                    "Instruction": "Listen to the audio and choose the best answer.",
-                    "WordLimit": None,
-                    "OrderIndex": 1,
-                    "Questions": [{"Content": f"Please generate 40 IELTS listening questions based on the transcript."}],
-                }
-            ],
-        }
-        return _normalize_backend_payload("Listening", payload, source_text, _topic, _level)
-
-    payload, used_fallback = _generate_llm_skill_payload(state, "Listening", fallback_factory)
+    payload = _generate_llm_skill_payload(state, "Listening")
 
     # Update context_bundle (Listening is typically last in the chain)
     bundle = dict(state.get("context_bundle") or {})
@@ -1228,22 +1043,23 @@ def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
 
     _print_ai_answer("Listening teacher output", payload)
 
-    return {"listening_result": payload, "context_bundle": bundle, "used_fallback": used_fallback}
+    return {"listening_result": payload, "context_bundle": bundle}
 
 
 # --------------------------------------------------------------------------
-# Node 7: Consolidation & Backend Parameterized SQL Sync (B4)
+# Node 7: Consolidation & Backend Sync (B4)
 # --------------------------------------------------------------------------
 @_node_guard("backend_sync_node")
 def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     """
     Consolidate results from all executed teachers into a single payload,
-    then invoke C# backend API via parameterized POST.
+    then invoke C# backend API via POST. Values are mapped to the DB CHECK constraints
+    (Level: Beginner/Intermediate/Advanced, Source: AI).
     """
-    selected_skill = state.get("selected_skill", "Reading")
     topic = state.get("detected_topic", "General Academic")
     teachers = state.get("allocated_teachers", ["Reading"])
     tool_params = _resolve_tool_params(state.get("tool_params"))
+    level_enum = _band_to_level(state.get("target_level", ""))
 
     reading = state.get("reading_result")
     speaking = state.get("speaking_result")
@@ -1265,17 +1081,20 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
                 "Title": f"Audio Transcript: {topic}",
                 "Content": listening.get("ListeningSection", {}).get("Transcript", ""),
                 "Topic": topic,
-                "Level": "Band 7.0",
+                "Level": level_enum,
                 "WordCount": len(listening.get("ListeningSection", {}).get("Transcript", "").split())
             }
+
+    if combined_passage:
+        combined_passage = {**combined_passage, "Level": level_enum}
 
     # Consolidated Quiz Object
     quiz_title = state.get("quiz_title") or f"IELTS Comprehensive Assessment: {topic} ({', '.join(teachers)})"
     consolidated_quiz = {
         "Title": quiz_title,
         "Skill": "All" if len(teachers) > 1 else teachers[0],
-        "Level": state.get("target_level", "Band 7.0 - 7.5"),
-        "Source": "AI_Generated",
+        "Level": level_enum,
+        "Source": "AI",
         "CreatorId": state.get("user_id"),
         "Passage": combined_passage,
         "QuestionGroups": consolidated_groups,
@@ -1284,7 +1103,6 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
         "ListeningSection": listening.get("ListeningSection") if listening else None,
     }
 
-    # Post to C# API with parameterized queries
     backend_url = tool_params.get("backend_url") or "http://localhost:5000/api/quiz/save"
     _trace("TOOL CALLED: post_to_sql_backend", {"url": backend_url})
     api_response = post_to_sql_backend(consolidated_quiz, url=backend_url)
@@ -1301,8 +1119,8 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
 @_node_guard("export_knowledge_node")
 def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
     """
-    Exports the generated test into Word (.docx) and Excel (.xlsx),
-    and records the exported file metadata into the KnowledgeDocument table.
+    Exports the generated test into Word (.docx) and Excel (.xlsx) with a per-run
+    file name, and records the exported file metadata into the KnowledgeDocument table.
     """
     quiz = state.get("consolidated_quiz")
     if not quiz:
@@ -1310,13 +1128,23 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
 
     tool_params = _resolve_tool_params(state.get("tool_params"))
 
+    run_id = uuid.uuid4().hex[:12]
+    export_dir = Path(tool_params["word_output_path"]).parent
+    export_dir.mkdir(parents=True, exist_ok=True)
+    word_name = f"ielts_quiz_{run_id}.docx"
+    excel_name = f"ielts_quiz_{run_id}.xlsx"
+
     # 1. Export Word
     _trace("TOOL CALLED: export_to_word")
-    word_path = export_to_word(quiz, output_path=tool_params.get("word_output_path") or str(Path(__file__).resolve().parents[1] / "exports" / "ielts_quiz_output.docx"))
+    word_path = export_to_word(quiz, output_path=str(export_dir / word_name))
 
     # 2. Export Excel
     _trace("TOOL CALLED: export_to_excel")
-    excel_path = export_to_excel(quiz, output_path=tool_params.get("excel_output_path") or str(Path(__file__).resolve().parents[1] / "exports" / "ielts_quiz_output.xlsx"))
+    excel_path = export_to_excel(quiz, output_path=str(export_dir / excel_name))
+
+    # Never store absolute server paths in the DB
+    public_base = os.getenv("IELTS_EXPORT_PUBLIC_URL", "").rstrip("/")
+    file_url = f"{public_base}/{word_name}" if public_base else word_name
 
     # 3. Save to Knowledge Document
     doc_summary = (
@@ -1324,7 +1152,7 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
         f"Skill: {quiz.get('Skill')} | Level: {quiz.get('Level')}\n"
         f"Passage Word Count: {quiz.get('Passage', {}).get('WordCount', 0) if quiz.get('Passage') else 0}\n"
         f"Total Question Groups: {len(quiz.get('QuestionGroups', []))}\n"
-        f"Exported Files: Word ({os.path.basename(word_path)}), Excel ({os.path.basename(excel_path)})"
+        f"Exported Files: Word ({word_name}), Excel ({excel_name})"
     )
 
     user_id = state.get("user_id")
@@ -1332,7 +1160,7 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
         "Title": quiz.get("Title", "IELTS Generated Quiz Document"),
         "Category": "AI_Quiz_Export",
         "Content": doc_summary,
-        "FileURL": word_path,
+        "FileURL": file_url,
         "Source": "System",
         "UploadedBy": None if not user_id or not str(user_id).strip() else str(user_id).strip()
     }
@@ -1478,10 +1306,18 @@ def run_quiz_pipeline(
     user_id: Optional[str] = None,
     quiz_title: Optional[str] = None,
     llm: Any = None,
-    tool_params: Optional[Dict[str, Any]] = None
+    tool_params: Optional[Dict[str, Any]] = None,
+    allowed_skills: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
-    """Execute the compiled LangGraph workflow with input parameters."""
-    _trace("PIPELINE START", {"skill": selected_skill, "tier": user_tier, "input_type": input_type})
+    """
+    Execute the compiled LangGraph workflow with input parameters.
+
+    raw_input must be content (bytes / data URL / plain text), not a file path or URL.
+    allowed_skills comes from the backend (Package.HasSpeakingAI / HasWritingAI);
+    when omitted only Reading and Listening are allowed.
+    """
+    _trace("PIPELINE START", {"skill": selected_skill, "tier": user_tier, "input_type": input_type,
+                              "allowed_skills": allowed_skills})
     if llm is None:
         llm = _load_default_llm()
     initial_state: QuizState = {
@@ -1489,6 +1325,7 @@ def run_quiz_pipeline(
         "input_type": input_type,
         "selected_skill": selected_skill,
         "user_tier": user_tier,
+        "allowed_skills": allowed_skills or ["Reading", "Listening"],
         "user_id": user_id,
         "quiz_title": quiz_title,
         "llm": llm,

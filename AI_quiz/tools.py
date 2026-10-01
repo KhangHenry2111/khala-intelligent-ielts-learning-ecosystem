@@ -148,14 +148,12 @@ def guardrail_check(question: str, answer: str, skill: str, llm: Any, prompt: st
 
 
 def ocr_image_to_text(image_input: Union[str, bytes, Image.Image]) -> str:
-    """Extract text from a path, data URL, base64 string, bytes, or PIL image."""
+    """Extract text from bytes, a data URL / base64 string, or a PIL image. File paths are NOT accepted."""
     try:
         if isinstance(image_input, Image.Image):
             image = image_input
         elif isinstance(image_input, bytes):
             image = Image.open(io.BytesIO(image_input))
-        elif isinstance(image_input, str) and os.path.exists(image_input):
-            image = Image.open(image_input)
         elif isinstance(image_input, str):
             image = Image.open(io.BytesIO(base64.b64decode(image_input.split(";base64,")[-1])))
         else:
@@ -169,44 +167,27 @@ def ocr_image_to_text(image_input: Union[str, bytes, Image.Image]) -> str:
 
 
 def extract_document_text(raw_input: Union[str, bytes], file_type: str = "text", file_name: str = "") -> str:
-    """Return the full text from text, PDF, or base64 PDF payloads without truncation."""
+    """
+    Return the full text from bytes, a data URL, or a plain text string.
+    Never reads local file paths and never fetches URLs (prevents arbitrary file read / SSRF).
+    """
+    if isinstance(raw_input, str) and raw_input.startswith("data:"):
+        if ";base64," not in raw_input:
+            return raw_input.strip()
+        raw_input = base64.b64decode(raw_input.split(";base64,", 1)[1])
+
     if isinstance(raw_input, bytes):
-        if (file_type or file_name).lower().endswith("pdf") or (file_name or "").lower().endswith(".pdf"):
+        is_pdf = (
+            (file_type or "").lower() == "pdf"
+            or (file_name or "").lower().endswith(".pdf")
+            or raw_input[:5] == b"%PDF-"
+        )
+        if is_pdf:
             if PdfReader is None:
                 raise RuntimeError("pypdf is required to extract PDF text.")
             reader = PdfReader(io.BytesIO(raw_input))
-            pages = [page.extract_text() or "" for page in reader.pages]
-            return "\n\n".join(pages).strip()
+            return "\n\n".join((page.extract_text() or "") for page in reader.pages).strip()
         return raw_input.decode("utf-8", errors="ignore")
-
-    if isinstance(raw_input, str):
-        if raw_input.startswith("data:"):
-            if ";base64," in raw_input:
-                _, encoded = raw_input.split(";base64,", 1)
-                raw_bytes = base64.b64decode(encoded)
-                return extract_document_text(raw_bytes, file_type=file_type, file_name=file_name)
-            return raw_input.strip()
-
-        lower_name = (file_name or raw_input).lower()
-        if lower_name.endswith(".pdf") or file_type.lower() == "pdf":
-            if os.path.exists(raw_input):
-                with open(raw_input, "rb") as handle:
-                    return extract_document_text(handle.read(), file_type="pdf", file_name=os.path.basename(raw_input))
-            if raw_input.startswith("http://") or raw_input.startswith("https://"):
-                response = requests.get(raw_input, timeout=30)
-                response.raise_for_status()
-                return extract_document_text(response.content, file_type="pdf", file_name=file_name or "downloaded.pdf")
-            try:
-                raw_bytes = base64.b64decode(raw_input)
-                return extract_document_text(raw_bytes, file_type="pdf", file_name=file_name or "embedded.pdf")
-            except Exception:
-                pass
-
-        if os.path.exists(raw_input):
-            with open(raw_input, "r", encoding="utf-8", errors="ignore") as handle:
-                return handle.read()
-
-        return raw_input.strip()
 
     return str(raw_input).strip()
 
