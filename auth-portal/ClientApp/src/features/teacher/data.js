@@ -17,6 +17,7 @@ export const gradingQueue = [
 ];
 
 export const teacherQuickActions = [
+  { title: 'Upload IELTS quiz', description: 'Import questions from JSON or CSV, set answers and per-question difficulty, then save to the database.', accent: 'primary-gradient', to: '/teacher/upload-quiz' },
   { title: 'Class management', description: 'Create classes, add students, schedule lessons, and share Google Meet links.', accent: 'primary-gradient', to: '/teacher/classes' },
   { title: 'Lesson management', description: 'Upload materials, lessons, and configure free or paid access.', accent: 'secondary-gradient', to: '/teacher/lessons' },
   { title: 'Upload lesson', description: 'Share a new lesson file, notes, and learning materials with students.', accent: 'dark-gradient', to: '/teacher/upload-lesson' },

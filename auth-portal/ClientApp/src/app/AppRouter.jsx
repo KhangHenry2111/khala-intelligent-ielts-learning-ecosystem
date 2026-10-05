@@ -17,6 +17,7 @@ import { LessonsPage } from '../features/teacher/lessons/LessonsPage';
 import { UploadLessonPage } from '../features/teacher/lessons/UploadLessonPage';
 import { GradingPage } from '../features/teacher/grading/GradingPage';
 import { AiReviewPage } from '../features/teacher/ai-review/AiReviewPage';
+import { TeacherCreateQuizPage } from '../features/teacher/quizzes/TeacherCreateQuizPage';
 import { AdminDashboardPage } from '../features/admin/dashboard/AdminDashboardPage';
 import { AccountsPage } from '../features/admin/accounts/AccountsPage';
 import { TeachersPage } from '../features/admin/teachers/TeachersPage';
@@ -66,6 +67,8 @@ const teacherFeaturePages = {
   'upload-lesson': UploadLessonPage,
   grading: GradingPage,
   'ai-review': AiReviewPage,
+  'create-quiz': TeacherCreateQuizPage,
+  'upload-quiz': TeacherCreateQuizPage,
 };
 
 const adminFeaturePages = {

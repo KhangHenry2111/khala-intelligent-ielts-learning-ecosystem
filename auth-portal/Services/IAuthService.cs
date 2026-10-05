@@ -12,6 +12,7 @@ public interface IAuthService
     string CreateSession(UserInfo user);
 
     bool RevokeSession(string token);
+    UserInfo? GetSession(string token);
     
     /// <summary>
     /// Print all user information to console

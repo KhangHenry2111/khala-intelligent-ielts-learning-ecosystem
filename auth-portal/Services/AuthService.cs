@@ -71,6 +71,9 @@ public class AuthService : IAuthService
 
     public bool RevokeSession(string token) => !string.IsNullOrWhiteSpace(token) && _sessions.TryRemove(token, out _);
 
+    public UserInfo? GetSession(string token) =>
+        !string.IsNullOrWhiteSpace(token) && _sessions.TryGetValue(token, out var user) ? user : null;
+
     public UserInfo? Authenticate(string username, string password, string userType)
     {
         userType = (userType ?? string.Empty).Trim();

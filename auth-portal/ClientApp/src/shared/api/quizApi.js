@@ -10,6 +10,14 @@ export const quizApi = {
     return request(`/api/quiz/user-tier${suffix}`);
   },
   moderationQueue: () => request('/api/quiz/moderation-queue'),
+  saveTeacherQuiz: (payload, token) => request('/api/quiz/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ ...payload, source: 'Teacher' }),
+  }),
+  teacherLessons: (token) => request('/api/quiz/teacher-lessons', {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   moderationDecision: (payload) => request('/api/quiz/moderation-decision', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

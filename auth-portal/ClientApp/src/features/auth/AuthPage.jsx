@@ -42,7 +42,7 @@ export function AuthPage({ mode, role: fixedRole }) {
       if (isRegister) {
         navigate(`/${role}/login`, { state: { message: 'Registration successful. You can sign in now.' } });
       } else {
-        signIn(result.user);
+        signIn({ ...result.user, accessToken: result.token });
         navigate(`/${role}/dashboard`);
       }
     } catch (err) {

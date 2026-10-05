@@ -10,9 +10,20 @@ public class SaveQuizRequest
     public string? Level { get; set; } = "Intermediate";
     public string? Source { get; set; } = "AI_Generated";
     public string? CreatorId { get; set; }
+    public string? Description { get; set; }
+    public bool IsFree { get; set; } = true;
+    public decimal Price { get; set; }
     public PassageDto? Passage { get; set; }
+    public ListeningAudioDto? Audio { get; set; }
     public List<QuestionGroupDto> QuestionGroups { get; set; } = new();
     public List<QuestionDto> DirectQuestions { get; set; } = new();
+}
+
+public class ListeningAudioDto
+{
+    public string? AudioURL { get; set; }
+    public string? Transcript { get; set; }
+    public string? Topic { get; set; }
 }
 
 public class PassageDto
@@ -44,6 +55,7 @@ public class QuestionDto
     public string? Options { get; set; }
     public string? CorrectAnswer { get; set; }
     public string? Explanation { get; set; }
+    public string? Difficulty { get; set; }
     public int OrderIndex { get; set; } = 1;
 }
 
@@ -90,6 +102,7 @@ public class SaveQuizResponse
     public string? QuizId { get; set; }
     public string? PassageId { get; set; }
     public int QuestionsCount { get; set; }
+    public string? MaterialId { get; set; }
 }
 
 public class EditQuizRequest

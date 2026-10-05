@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Data;
 using AuthPortal.Models;
+using AuthPortal.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using Microsoft.Extensions.Configuration;
@@ -13,10 +14,16 @@ using Microsoft.Extensions.Configuration;
 public class QuizController : ControllerBase
 {
     private readonly string? _connectionString;
+    private readonly IAuthService? _authService;
 
     public QuizController(IConfiguration config)
     {
         _connectionString = config.GetConnectionString("Default") ?? Environment.GetEnvironmentVariable("USER_DB_CONNECTION");
+    }
+
+    public QuizController(IConfiguration config, IAuthService authService) : this(config)
+    {
+        _authService = authService;
     }
 
     private SqlConnection GetConnection()
@@ -26,6 +33,17 @@ public class QuizController : ControllerBase
             throw new InvalidOperationException("Connection string 'Default' is not configured.");
         }
         return new SqlConnection(_connectionString);
+    }
+
+    private static object NormalizeQuestionDifficulty(string? level)
+    {
+        return level?.Trim() switch
+        {
+            "Beginner" => "Beginner",
+            "Intermediate" => "Intermediate",
+            "Advanced" => "Advanced",
+            _ => DBNull.Value
+        };
     }
 
     [HttpGet("catalog")]
@@ -135,14 +153,41 @@ public class QuizController : ControllerBase
         {
             using var conn = GetConnection();
             conn.Open();
+
+            var isTeacherQuiz = string.Equals(req.Source, "Teacher", StringComparison.OrdinalIgnoreCase);
+            if (isTeacherQuiz)
+            {
+                var token = Request.Headers.Authorization.ToString();
+                if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
+                var sessionUser = _authService?.GetSession(token);
+                if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Unauthorized(new SaveQuizResponse { Success = false, Message = "Sign in as a teacher before creating a quiz." });
+                }
+
+                if (!Guid.TryParse(req.CreatorId, out var teacherId) || !Guid.TryParse(sessionUser.Id, out var sessionTeacherId) || teacherId != sessionTeacherId)
+                {
+                    return Forbid();
+                }
+
+                using var teacherCmd = new SqlCommand("SELECT CASE WHEN EXISTS (SELECT 1 FROM Teacher WHERE TeacherID = @TeacherID AND Status = 'Active') THEN 1 ELSE 0 END", conn);
+                teacherCmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                if (Convert.ToInt32(teacherCmd.ExecuteScalar()) != 1)
+                {
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "The teacher account was not found or is inactive." });
+                }
+            }
+
             using var tx = conn.BeginTransaction();
 
             Guid quizId = Guid.NewGuid();
             Guid? passageId = null;
+            Guid? audioId = null;
+            Guid? materialId = null;
             int questionsCount = 0;
 
             // 1. Normalize fields according to Database CHECK constraints
-            string normalizedSource = "AI";
+            string normalizedSource = isTeacherQuiz ? "Teacher" : "AI";
             string normalizedLevel = "Intermediate";
             if (!string.IsNullOrWhiteSpace(req.Level))
             {
@@ -159,12 +204,19 @@ public class QuizController : ControllerBase
             if (!string.IsNullOrWhiteSpace(req.Skill))
             {
                 var sLower = req.Skill.ToLowerInvariant();
-                if (sLower.Contains("writing") && !sLower.Contains("reading"))
+                if (sLower == "listening")
+                    normalizedSkill = "Listening";
+                else if (sLower.Contains("writing") && !sLower.Contains("reading"))
                     normalizedSkill = "Writing";
                 else if (sLower.Contains("all") || sLower.Contains("toàn") || sLower.Contains("speaking") || sLower.Contains("listening") || (sLower.Contains("reading") && sLower.Contains("writing")))
                     normalizedSkill = "Reading+Writing";
                 else
                     normalizedSkill = "Reading";
+            }
+
+            if (isTeacherQuiz && normalizedSkill is not ("Reading" or "Listening"))
+            {
+                return BadRequest(new SaveQuizResponse { Success = false, Message = "Teacher lesson quizzes currently support Reading and Listening." });
             }
 
             // 2. If passage is provided, save ReadingPassage with ModerationStatus = 'Pending'
@@ -173,10 +225,10 @@ public class QuizController : ControllerBase
                 passageId = Guid.NewGuid();
                 string insertPassageSql = @"
                     INSERT INTO ReadingPassage (
-                        PassageID, Title, Content, WordCount, Topic, Level, Source, 
+                        PassageID, Title, Content, WordCount, Topic, Level, Source, CreatedBy,
                         CreatedByType, ModerationStatus, CreatedAt, UpdatedAt
                     ) VALUES (
-                        @PassageID, @Title, @Content, @WordCount, @Topic, @Level, @Source, 
+                        @PassageID, @Title, @Content, @WordCount, @Topic, @Level, @Source, @CreatedBy,
                         @CreatedByType, @ModerationStatus, @CreatedAt, @UpdatedAt
                     )";
 
@@ -188,7 +240,8 @@ public class QuizController : ControllerBase
                 cmdPassage.Parameters.Add(new SqlParameter("@Topic", SqlDbType.NVarChar, 100) { Value = (object?)req.Passage.Topic ?? "General" });
                 cmdPassage.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = normalizedLevel });
                 cmdPassage.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 20) { Value = normalizedSource });
-                cmdPassage.Parameters.Add(new SqlParameter("@CreatedByType", SqlDbType.NVarChar, 20) { Value = "AI" });
+                cmdPassage.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.UniqueIdentifier) { Value = isTeacherQuiz && Guid.TryParse(req.CreatorId, out var passageCreatorId) ? (object)passageCreatorId : DBNull.Value });
+                cmdPassage.Parameters.Add(new SqlParameter("@CreatedByType", SqlDbType.NVarChar, 20) { Value = isTeacherQuiz ? "Teacher" : "AI" });
                 cmdPassage.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = "Pending" });
                 cmdPassage.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                 cmdPassage.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
@@ -196,12 +249,43 @@ public class QuizController : ControllerBase
                 cmdPassage.ExecuteNonQuery();
             }
 
+            if (normalizedSkill == "Listening" && req.Audio != null && !string.IsNullOrWhiteSpace(req.Audio.AudioURL))
+            {
+                audioId = Guid.NewGuid();
+                var insertAudioSql = @"
+                    INSERT INTO ListeningAudio (
+                        AudioID, Title, AudioURL, Transcript, Topic, Level, Source, CreatedBy,
+                        CreatedByType, ModerationStatus, CreatedAt, UpdatedAt
+                    ) VALUES (
+                        @AudioID, @Title, @AudioURL, @Transcript, @Topic, @Level, @Source, @CreatedBy,
+                        @CreatedByType, @ModerationStatus, @CreatedAt, @UpdatedAt
+                    )";
+                using var cmdAudio = new SqlCommand(insertAudioSql, conn, tx);
+                cmdAudio.Parameters.Add(new SqlParameter("@AudioID", SqlDbType.UniqueIdentifier) { Value = audioId.Value });
+                cmdAudio.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = string.IsNullOrWhiteSpace(req.Title) ? "Listening lesson" : req.Title });
+                cmdAudio.Parameters.Add(new SqlParameter("@AudioURL", SqlDbType.NVarChar, 500) { Value = req.Audio.AudioURL.Trim() });
+                cmdAudio.Parameters.Add(new SqlParameter("@Transcript", SqlDbType.NVarChar, -1) { Value = (object?)req.Audio.Transcript ?? DBNull.Value });
+                cmdAudio.Parameters.Add(new SqlParameter("@Topic", SqlDbType.NVarChar, 100) { Value = (object?)req.Audio.Topic ?? "General" });
+                cmdAudio.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = normalizedLevel });
+                cmdAudio.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 20) { Value = normalizedSource });
+                cmdAudio.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.UniqueIdentifier) { Value = isTeacherQuiz && Guid.TryParse(req.CreatorId, out var audioCreatorId) ? (object)audioCreatorId : DBNull.Value });
+                cmdAudio.Parameters.Add(new SqlParameter("@CreatedByType", SqlDbType.NVarChar, 20) { Value = isTeacherQuiz ? "Teacher" : "AI" });
+                cmdAudio.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = "Pending" });
+                cmdAudio.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                cmdAudio.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                cmdAudio.ExecuteNonQuery();
+            }
+            else if (isTeacherQuiz && normalizedSkill == "Listening")
+            {
+                return BadRequest(new SaveQuizResponse { Success = false, Message = "Add an audio URL for a Listening lesson." });
+            }
+
             // 3. Insert Quiz with Status = 'Draft'
             string insertQuizSql = @"
                 INSERT INTO Quiz (
-                    QuizID, Title, Skill, Level, Source, CreatorID, Status, CreatedAt, PassageID
+                    QuizID, Title, Skill, Level, Source, CreatorID, Status, CreatedAt, PassageID, AudioID
                 ) VALUES (
-                    @QuizID, @Title, @Skill, @Level, @Source, @CreatorID, @Status, @CreatedAt, @PassageID
+                    @QuizID, @Title, @Skill, @Level, @Source, @CreatorID, @Status, @CreatedAt, @PassageID, @AudioID
                 )";
 
             using (var cmdQuiz = new SqlCommand(insertQuizSql, conn, tx))
@@ -215,6 +299,7 @@ public class QuizController : ControllerBase
                 cmdQuiz.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = "Draft" });
                 cmdQuiz.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                 cmdQuiz.Parameters.Add(new SqlParameter("@PassageID", SqlDbType.UniqueIdentifier) { Value = passageId.HasValue ? (object)passageId.Value : DBNull.Value });
+                cmdQuiz.Parameters.Add(new SqlParameter("@AudioID", SqlDbType.UniqueIdentifier) { Value = audioId.HasValue ? (object)audioId.Value : DBNull.Value });
 
                 cmdQuiz.ExecuteNonQuery();
             }
@@ -231,6 +316,10 @@ public class QuizController : ControllerBase
                     if (result != null && result != DBNull.Value)
                     {
                         return Convert.ToInt32(result);
+                    }
+                    if (isTeacherQuiz)
+                    {
+                        throw new InvalidOperationException($"Question format '{code}' is missing from QuestionTypeCatalog. Run scripts/teacher_quiz_question_types.sql against the IELTS database.");
                     }
                 }
                 return 1; // Default to MULTIPLE_CHOICE_SINGLE
@@ -274,10 +363,10 @@ public class QuizController : ControllerBase
                             string insertQSql = @"
                                 INSERT INTO Question (
                                     QuestionID, QuizID, QuestionType, Content, Options, 
-                                    CorrectAnswer, Explanation, OrderIndex, GroupID, QuestionTypeID
+                                    CorrectAnswer, Explanation, Difficulty, OrderIndex, GroupID, QuestionTypeID
                                 ) VALUES (
                                     @QuestionID, @QuizID, @QuestionType, @Content, @Options, 
-                                    @CorrectAnswer, @Explanation, @OrderIndex, @GroupID, @QuestionTypeID
+                                    @CorrectAnswer, @Explanation, @Difficulty, @OrderIndex, @GroupID, @QuestionTypeID
                                 )";
 
                             using var cmdQ = new SqlCommand(insertQSql, conn, tx);
@@ -288,6 +377,7 @@ public class QuizController : ControllerBase
                             cmdQ.Parameters.Add(new SqlParameter("@Options", SqlDbType.NVarChar, -1) { Value = (object?)q.Options ?? DBNull.Value });
                             cmdQ.Parameters.Add(new SqlParameter("@CorrectAnswer", SqlDbType.NVarChar, 500) { Value = (object?)q.CorrectAnswer ?? DBNull.Value });
                             cmdQ.Parameters.Add(new SqlParameter("@Explanation", SqlDbType.NVarChar, -1) { Value = (object?)q.Explanation ?? DBNull.Value });
+                            cmdQ.Parameters.Add(new SqlParameter("@Difficulty", SqlDbType.NVarChar, 20) { Value = NormalizeQuestionDifficulty(q.Difficulty) });
                             cmdQ.Parameters.Add(new SqlParameter("@OrderIndex", SqlDbType.Int) { Value = q.OrderIndex > 0 ? q.OrderIndex : questionsCount });
                             cmdQ.Parameters.Add(new SqlParameter("@GroupID", SqlDbType.UniqueIdentifier) { Value = groupId });
                             cmdQ.Parameters.Add(new SqlParameter("@QuestionTypeID", SqlDbType.Int) { Value = qTypeId });
@@ -306,13 +396,13 @@ public class QuizController : ControllerBase
                     questionsCount++;
                     int qTypeId = ResolveTypeId(q.QuestionTypeCode, q.QuestionTypeID);
                     string insertQSql = @"
-                        INSERT INTO Question (
-                            QuestionID, QuizID, QuestionType, Content, Options, 
-                            CorrectAnswer, Explanation, OrderIndex, GroupID, QuestionTypeID
-                        ) VALUES (
-                            @QuestionID, @QuizID, @QuestionType, @Content, @Options, 
-                            @CorrectAnswer, @Explanation, @OrderIndex, NULL, @QuestionTypeID
-                        )";
+                                INSERT INTO Question (
+                                    QuestionID, QuizID, QuestionType, Content, Options, 
+                                    CorrectAnswer, Explanation, Difficulty, OrderIndex, GroupID, QuestionTypeID
+                                ) VALUES (
+                                    @QuestionID, @QuizID, @QuestionType, @Content, @Options, 
+                                    @CorrectAnswer, @Explanation, @Difficulty, @OrderIndex, NULL, @QuestionTypeID
+                                )";
 
                     using var cmdQ = new SqlCommand(insertQSql, conn, tx);
                     cmdQ.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = Guid.NewGuid() });
@@ -322,11 +412,48 @@ public class QuizController : ControllerBase
                     cmdQ.Parameters.Add(new SqlParameter("@Options", SqlDbType.NVarChar, -1) { Value = (object?)q.Options ?? DBNull.Value });
                     cmdQ.Parameters.Add(new SqlParameter("@CorrectAnswer", SqlDbType.NVarChar, 500) { Value = (object?)q.CorrectAnswer ?? DBNull.Value });
                     cmdQ.Parameters.Add(new SqlParameter("@Explanation", SqlDbType.NVarChar, -1) { Value = (object?)q.Explanation ?? DBNull.Value });
+                    cmdQ.Parameters.Add(new SqlParameter("@Difficulty", SqlDbType.NVarChar, 20) { Value = NormalizeQuestionDifficulty(q.Difficulty) });
                     cmdQ.Parameters.Add(new SqlParameter("@OrderIndex", SqlDbType.Int) { Value = q.OrderIndex > 0 ? q.OrderIndex : questionsCount });
                     cmdQ.Parameters.Add(new SqlParameter("@QuestionTypeID", SqlDbType.Int) { Value = qTypeId });
 
                     cmdQ.ExecuteNonQuery();
                 }
+            }
+
+            if (isTeacherQuiz)
+            {
+                if (questionsCount == 0)
+                {
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Add at least one question before uploading the lesson." });
+                }
+                if (req.Price < 0)
+                {
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Lesson price cannot be negative." });
+                }
+
+                materialId = Guid.NewGuid();
+                const string insertMaterialSql = @"
+                    INSERT INTO Material (
+                        MaterialID, TeacherID, Title, Description, Skill, Level, FileURL, FileType,
+                        IsFree, Price, DownloadCount, Status, CreatedAt, QuizID
+                    ) VALUES (
+                        @MaterialID, @TeacherID, @Title, @Description, @Skill, @Level, @FileURL, @FileType,
+                        @IsFree, @Price, 0, 'Pending', @CreatedAt, @QuizID
+                    )";
+                using var cmdMaterial = new SqlCommand(insertMaterialSql, conn, tx);
+                cmdMaterial.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId.Value });
+                cmdMaterial.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = Guid.Parse(req.CreatorId!) });
+                cmdMaterial.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = string.IsNullOrWhiteSpace(req.Title) ? "IELTS lesson quiz" : req.Title.Trim() });
+                cmdMaterial.Parameters.Add(new SqlParameter("@Description", SqlDbType.NVarChar, -1) { Value = (object?)req.Description ?? DBNull.Value });
+                cmdMaterial.Parameters.Add(new SqlParameter("@Skill", SqlDbType.NVarChar, 30) { Value = normalizedSkill });
+                cmdMaterial.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = normalizedLevel });
+                cmdMaterial.Parameters.Add(new SqlParameter("@FileURL", SqlDbType.NVarChar, 500) { Value = DBNull.Value });
+                cmdMaterial.Parameters.Add(new SqlParameter("@FileType", SqlDbType.NVarChar, 20) { Value = "Quiz" });
+                cmdMaterial.Parameters.Add(new SqlParameter("@IsFree", SqlDbType.Bit) { Value = req.IsFree });
+                cmdMaterial.Parameters.Add(new SqlParameter("@Price", SqlDbType.Decimal) { Precision = 12, Scale = 2, Value = req.IsFree ? 0m : req.Price });
+                cmdMaterial.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                cmdMaterial.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmdMaterial.ExecuteNonQuery();
             }
 
             tx.Commit();
@@ -337,7 +464,8 @@ public class QuizController : ControllerBase
                 Message = "Quiz successfully saved with unmoderated status (Draft / Pending).",
                 QuizId = quizId.ToString(),
                 PassageId = passageId?.ToString(),
-                QuestionsCount = questionsCount
+                QuestionsCount = questionsCount,
+                MaterialId = materialId?.ToString()
             });
         }
         catch (Exception ex)
@@ -347,6 +475,59 @@ public class QuizController : ControllerBase
                 Success = false,
                 Message = $"Failed to save quiz: {ex.Message}"
             });
+        }
+    }
+
+    [HttpGet("teacher-lessons")]
+    public IActionResult GetTeacherLessons()
+    {
+        var token = Request.Headers.Authorization.ToString();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
+        var sessionUser = _authService?.GetSession(token);
+        if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
+            || !Guid.TryParse(sessionUser.Id, out var teacherId))
+        {
+            return Unauthorized(new { success = false, message = "Sign in as a teacher to view uploaded lessons." });
+        }
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            const string sql = @"
+                SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt,
+                       COUNT(q.QuestionID) AS QuestionCount
+                FROM Material m
+                LEFT JOIN Quiz quiz ON quiz.QuizID = m.QuizID
+                LEFT JOIN Question q ON q.QuizID = quiz.QuizID
+                WHERE m.TeacherID = @TeacherID AND m.QuizID IS NOT NULL
+                GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt
+                ORDER BY m.CreatedAt DESC";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read())
+            {
+                items.Add(new
+                {
+                    materialId = reader.GetGuid(0).ToString(),
+                    title = reader.GetString(1),
+                    description = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    skill = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    level = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    isFree = reader.GetBoolean(5),
+                    price = reader.GetDecimal(6),
+                    status = reader.GetString(7),
+                    createdAt = reader.GetDateTime(8),
+                    questionCount = reader.GetInt32(9)
+                });
+            }
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
         }
     }
 

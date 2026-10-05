@@ -167,4 +167,5 @@ public class FakeAuthService : IAuthService
 
     public string CreateSession(UserInfo user) => "test-token";
     public bool RevokeSession(string token) => token == "test-token";
+    public UserInfo? GetSession(string token) => token == "test-token" ? UserToReturn : null;
 }
