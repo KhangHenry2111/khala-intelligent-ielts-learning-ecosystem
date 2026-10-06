@@ -249,7 +249,9 @@ public class QuizController : ControllerBase
                 cmdPassage.ExecuteNonQuery();
             }
 
-            if (normalizedSkill == "Listening" && req.Audio != null && !string.IsNullOrWhiteSpace(req.Audio.AudioURL))
+            if (normalizedSkill == "Listening" && req.Audio != null
+                && (!string.IsNullOrWhiteSpace(req.Audio.AudioURL)
+                    || (!isTeacherQuiz && !string.IsNullOrWhiteSpace(req.Audio.Transcript))))
             {
                 audioId = Guid.NewGuid();
                 var insertAudioSql = @"
@@ -263,7 +265,7 @@ public class QuizController : ControllerBase
                 using var cmdAudio = new SqlCommand(insertAudioSql, conn, tx);
                 cmdAudio.Parameters.Add(new SqlParameter("@AudioID", SqlDbType.UniqueIdentifier) { Value = audioId.Value });
                 cmdAudio.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = string.IsNullOrWhiteSpace(req.Title) ? "Listening lesson" : req.Title });
-                cmdAudio.Parameters.Add(new SqlParameter("@AudioURL", SqlDbType.NVarChar, 500) { Value = req.Audio.AudioURL.Trim() });
+                cmdAudio.Parameters.Add(new SqlParameter("@AudioURL", SqlDbType.NVarChar, 500) { Value = (object?)(string.IsNullOrWhiteSpace(req.Audio.AudioURL) ? null : req.Audio.AudioURL.Trim()) ?? DBNull.Value });
                 cmdAudio.Parameters.Add(new SqlParameter("@Transcript", SqlDbType.NVarChar, -1) { Value = (object?)req.Audio.Transcript ?? DBNull.Value });
                 cmdAudio.Parameters.Add(new SqlParameter("@Topic", SqlDbType.NVarChar, 100) { Value = (object?)req.Audio.Topic ?? "General" });
                 cmdAudio.Parameters.Add(new SqlParameter("@Level", SqlDbType.NVarChar, 20) { Value = normalizedLevel });
@@ -542,20 +544,24 @@ public class QuizController : ControllerBase
             var queue = new List<QuizModerationItem>();
             string sql = @"
                 SELECT q.QuizID, q.Title, q.Skill, q.Level, q.Source, q.Status, q.CreatedAt,
-                       rp.PassageID, rp.Title AS PassageTitle, rp.Topic, rp.WordCount, rp.Content AS PassageContent, rp.ModerationStatus,
+                       rp.PassageID, rp.Title AS PassageTitle, rp.Topic, rp.WordCount, rp.Content AS PassageContent,
+                       COALESCE(rp.ModerationStatus, la.ModerationStatus) AS ModerationStatus,
+                       la.AudioURL, la.Transcript,
                        ISNULL(qc.QuestionCount, 0) AS QuestionCount
                 FROM Quiz q
                 LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
+                LEFT JOIN ListeningAudio la ON la.AudioID = q.AudioID
                 LEFT JOIN (
                     SELECT QuizID, COUNT(*) AS QuestionCount
                     FROM Question
                     GROUP BY QuizID
                 ) qc ON qc.QuizID = q.QuizID
                 WHERE q.Source = 'AI'
-                  AND q.Skill IN ('Reading', 'Reading+Writing')
+                  AND q.Skill IN ('Reading', 'Reading+Writing', 'Listening')
                   AND (
                         q.Status IN ('Draft', 'PendingReview')
                         OR rp.ModerationStatus IN ('Pending', 'Rejected')
+                        OR la.ModerationStatus IN ('Pending', 'Rejected')
                       )
                 ORDER BY q.CreatedAt DESC";
 
@@ -576,6 +582,8 @@ public class QuizController : ControllerBase
                     Topic = reader.IsDBNull(reader.GetOrdinal("Topic")) ? null : reader.GetString(reader.GetOrdinal("Topic")),
                     WordCount = reader.IsDBNull(reader.GetOrdinal("WordCount")) ? null : reader.GetInt32(reader.GetOrdinal("WordCount")),
                     PassageContent = reader.IsDBNull(reader.GetOrdinal("PassageContent")) ? null : reader.GetString(reader.GetOrdinal("PassageContent")),
+                    AudioURL = reader.IsDBNull(reader.GetOrdinal("AudioURL")) ? null : reader.GetString(reader.GetOrdinal("AudioURL")),
+                    Transcript = reader.IsDBNull(reader.GetOrdinal("Transcript")) ? null : reader.GetString(reader.GetOrdinal("Transcript")),
                     QuestionCount = reader.IsDBNull(reader.GetOrdinal("QuestionCount")) ? 0 : reader.GetInt32(reader.GetOrdinal("QuestionCount")),
                     ModerationStatus = reader.IsDBNull(reader.GetOrdinal("ModerationStatus")) ? null : reader.GetString(reader.GetOrdinal("ModerationStatus")),
                     CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
@@ -618,27 +626,24 @@ public class QuizController : ControllerBase
             using var conn = GetConnection();
             conn.Open();
 
-            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
+            Guid? passageId;
+            Guid? audioId;
+            const string selectQuiz = "SELECT PassageID, AudioID FROM Quiz WHERE QuizID = @QuizId";
             using (var cmd = new SqlCommand(selectQuiz, conn))
             {
                 cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
-                var passageIdObj = cmd.ExecuteScalar();
-                if (passageIdObj == null || passageIdObj == DBNull.Value)
+                using var reader = cmd.ExecuteReader();
+                if (!reader.Read())
                 {
                     return NotFound(new { success = false, message = "Quiz not found." });
                 }
+                passageId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
+                audioId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+            }
+            var teacherId = Guid.TryParse(req.TeacherId, out var teacherGuid) ? teacherGuid : (Guid?)null;
 
-                var passageIdString = passageIdObj?.ToString();
-                if (string.IsNullOrWhiteSpace(passageIdString) || !Guid.TryParse(passageIdString, out var parsedPassageId))
-                {
-                    return BadRequest(new { success = false, message = "Quiz passage id is invalid." });
-                }
-
-                var passageId = parsedPassageId;
-                var teacherId = Guid.TryParse(req.TeacherId, out var teacherGuid) ? teacherGuid : (Guid?)null;
-
-                using var tx = conn.BeginTransaction();
-
+            using (var tx = conn.BeginTransaction())
+            {
                 using (var updateQuiz = new SqlCommand(@"
                     UPDATE Quiz
                     SET Status = @Status,
@@ -653,6 +658,7 @@ public class QuizController : ControllerBase
                     updateQuiz.ExecuteNonQuery();
                 }
 
+                if (passageId.HasValue)
                 using (var updatePassage = new SqlCommand(@"
                     UPDATE ReadingPassage
                     SET ModerationStatus = @ModerationStatus,
@@ -669,8 +675,29 @@ public class QuizController : ControllerBase
                     updatePassage.Parameters.Add(new SqlParameter("@ModeratedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                     updatePassage.Parameters.Add(new SqlParameter("@RejectionReason", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.RejectionReason) ? DBNull.Value : (object)req.RejectionReason.Trim() });
                     updatePassage.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
-                    updatePassage.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId });
+                    updatePassage.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId.Value });
                     updatePassage.ExecuteNonQuery();
+                }
+
+                if (audioId.HasValue)
+                using (var updateAudio = new SqlCommand(@"
+                    UPDATE ListeningAudio
+                    SET ModerationStatus = @ModerationStatus,
+                        ModeratedBy = @ModeratedBy,
+                        ModeratedByType = @ModeratedByType,
+                        ModeratedAt = @ModeratedAt,
+                        RejectionReason = @RejectionReason,
+                        UpdatedAt = @UpdatedAt
+                    WHERE AudioID = @AudioId", conn, tx))
+                {
+                    updateAudio.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = passageStatus });
+                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
+                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = teacherId.HasValue ? "Teacher" : DBNull.Value });
+                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    updateAudio.Parameters.Add(new SqlParameter("@RejectionReason", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.RejectionReason) ? DBNull.Value : (object)req.RejectionReason.Trim() });
+                    updateAudio.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    updateAudio.Parameters.Add(new SqlParameter("@AudioId", SqlDbType.UniqueIdentifier) { Value = audioId.Value });
+                    updateAudio.ExecuteNonQuery();
                 }
 
                 tx.Commit();
@@ -849,18 +876,17 @@ public class QuizController : ControllerBase
             conn.Open();
             using var tx = conn.BeginTransaction();
 
-            // Get PassageID before deleting Quiz
-            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
-            object? passageIdObj;
+            // Get linked content IDs before deleting Quiz.
+            const string selectQuiz = "SELECT PassageID, AudioID FROM Quiz WHERE QuizID = @QuizId";
+            Guid? passageId;
+            Guid? audioId;
             using (var cmd = new SqlCommand(selectQuiz, conn, tx))
             {
                 cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
-                passageIdObj = cmd.ExecuteScalar();
-            }
-
-            if (passageIdObj == null)
-            {
-                return NotFound(new { success = false, message = "Quiz not found." });
+                using var reader = cmd.ExecuteReader();
+                if (!reader.Read()) return NotFound(new { success = false, message = "Quiz not found." });
+                passageId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
+                audioId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             }
 
             // Delete AIQuizRequest
@@ -905,6 +931,13 @@ public class QuizController : ControllerBase
                 cmd.ExecuteNonQuery();
             }
 
+            // Remove any lesson row linked to this quiz before deleting it.
+            using (var cmd = new SqlCommand("DELETE FROM Material WHERE QuizID = @QuizId", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.ExecuteNonQuery();
+            }
+
             // Delete Quiz
             using (var cmd = new SqlCommand("DELETE FROM Quiz WHERE QuizID = @QuizId", conn, tx))
             {
@@ -913,11 +946,20 @@ public class QuizController : ControllerBase
             }
 
             // Delete ReadingPassage if exists
-            if (passageIdObj != DBNull.Value && Guid.TryParse(passageIdObj.ToString(), out var passageId))
+            if (passageId.HasValue)
             {
                 using (var cmd = new SqlCommand("DELETE FROM ReadingPassage WHERE PassageID = @PassageId", conn, tx))
                 {
-                    cmd.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId });
+                    cmd.Parameters.Add(new SqlParameter("@PassageId", SqlDbType.UniqueIdentifier) { Value = passageId.Value });
+                    cmd.ExecuteNonQuery();
+                }
+            }
+
+            if (audioId.HasValue)
+            {
+                using (var cmd = new SqlCommand("DELETE FROM ListeningAudio WHERE AudioID = @AudioId", conn, tx))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@AudioId", SqlDbType.UniqueIdentifier) { Value = audioId.Value });
                     cmd.ExecuteNonQuery();
                 }
             }

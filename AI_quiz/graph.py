@@ -212,6 +212,10 @@ class QuizState(TypedDict):
     raw_input: Union[str, bytes]
     input_type: str                  # "text" | "image" | "pdf"
     selected_skill: str              # "Reading" | "Speaking" | "Writing" | "Listening" | "All"
+    selected_question_type: Optional[str]
+    selected_question_type_skill: Optional[str]
+    question_type_description: str
+    question_type_instruction: str
     user_tier: str                   # Informational only (prompt context); NOT used for access control
     allowed_skills: List[str]        # Skills the user's Package allows (computed by backend)
     user_id: Optional[str]
@@ -601,6 +605,119 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 _ALL_SKILLS = ["Reading", "Listening", "Speaking", "Writing"]
 
+_QUESTION_TYPE_DETAILS = {
+    "MULTIPLE_CHOICE_SINGLE": {
+        "skills": ("Reading", "Listening"),
+        "description": "Select the single best answer from four options.",
+        "instruction": "Write clear A-D options with one unambiguously correct answer. Use plausible distractors based on likely misreadings, not unsupported facts.",
+    },
+    "MULTIPLE_CHOICE_MULTI": {
+        "skills": ("Reading", "Listening"),
+        "description": "Select exactly two correct answers from four options.",
+        "instruction": "Write four A-D options and exactly two correct answers. State that two answers are required and separate their answer letters with a comma.",
+    },
+    "TRUE_FALSE_NOT_GIVEN": {
+        "skills": ("Reading",),
+        "description": "Classify each statement as True, False, or Not Given by comparing it with explicit passage facts.",
+        "instruction": "Write factual statements. True means the passage explicitly supports the statement; False means it explicitly contradicts it; Not Given means the passage provides insufficient information. Never treat a plausible inference as stated fact.",
+    },
+    "YES_NO_NOT_GIVEN": {
+        "skills": ("Reading",),
+        "description": "Classify each statement as Yes, No, or Not Given against the writer's expressed views or claims.",
+        "instruction": "Focus on the writer's opinions, claims, or attitudes rather than objective facts. Yes agrees with the writer, No contradicts the writer, and Not Given is not expressed.",
+    },
+    "MATCHING_HEADINGS": {
+        "skills": ("Reading",),
+        "description": "Match each paragraph to a heading that summarizes its central idea.",
+        "instruction": "Give each paragraph a label and provide a shared list of concise headings with unique labels. Include more headings than paragraphs so some remain unused. The correct heading must capture the paragraph's main idea, not a minor detail.",
+    },
+    "MATCHING_INFORMATION": {
+        "skills": ("Reading",),
+        "description": "Match a specific fact, example, explanation, or detail to the paragraph where it appears.",
+        "instruction": "Provide paragraph labels and a shared list of distinct information statements. Questions must ask where a particular detail is mentioned, not which paragraph has the main idea. Allow paragraph labels to be reused when appropriate.",
+    },
+    "MATCHING_FEATURES": {
+        "skills": ("Reading", "Listening"),
+        "description": "Match statements to people, places, items, or theories from a shared option list.",
+        "instruction": "Provide a shared list of clearly labelled features and ask which feature is associated with each statement. Make each answer traceable to the passage or recording; state whether options may be reused.",
+    },
+    "MATCHING_SENTENCE_ENDINGS": {
+        "skills": ("Reading",),
+        "description": "Match each sentence beginning to the ending that completes its meaning.",
+        "instruction": "Provide sentence beginnings as prompts and a shared labelled list of endings. Only one ending should fit each beginning based on the passage; include plausible extra endings where suitable.",
+    },
+    "SENTENCE_COMPLETION": {
+        "skills": ("Reading", "Listening"),
+        "description": "Complete a sentence with exact words or a short phrase from the source, within the stated word limit.",
+        "instruction": "Put one blank in each complete sentence. The answer must use the exact word(s) found in the passage or transcript, preserve grammatical fit, and contain no more than TWO WORDS.",
+    },
+    "SUMMARY_COMPLETION": {
+        "skills": ("Reading", "Listening"),
+        "description": "Fill gaps in a short summary using source wording or a defined set of options.",
+        "instruction": "Use a concise summary that follows the source's meaning and sequence. Each blank must have a uniquely supported answer of no more than TWO WORDS; if using options, include their labelled shared list.",
+    },
+    "NOTE_COMPLETION": {
+        "skills": ("Reading", "Listening"),
+        "description": "Complete structured notes with key names, facts, dates, or phrases from the source.",
+        "instruction": "Present concise notes with one clear blank per question. Answers must be stated in the source and contain no more than TWO WORDS.",
+    },
+    "TABLE_COMPLETION": {
+        "skills": ("Reading", "Listening"),
+        "description": "Fill missing table cells with source details that fit the row and column headings.",
+        "instruction": "Provide meaningful row and column context in each prompt. Each answer must be an exact source detail of no more than TWO WORDS and fit its cell grammatically and logically.",
+    },
+    "FLOW_CHART_COMPLETION": {
+        "skills": ("Reading", "Listening"),
+        "description": "Complete missing steps in a process in the order described by the source.",
+        "instruction": "Show the process sequence and leave a clear blank for each missing step. Answers must be supported by the source, appear in the correct order, and contain no more than TWO WORDS.",
+    },
+    "DIAGRAM_LABEL_COMPLETION": {
+        "skills": ("Reading",),
+        "description": "Label parts of a diagram using names or short phrases supported by the passage.",
+        "instruction": "Describe the relevant diagram structure and identify each label position in the prompt because no image is supplied. Answers must be source-based and contain no more than TWO WORDS.",
+    },
+    "SHORT_ANSWER": {
+        "skills": ("Reading", "Listening"),
+        "description": "Answer focused factual questions briefly using source information.",
+        "instruction": "Ask direct questions with a concise, uniquely supported answer. Set the word limit to NO MORE THAN THREE WORDS and do not require explanation beyond the answer.",
+    },
+    "MAP_PLAN_LABELING": {
+        "skills": ("Listening",),
+        "description": "Identify locations on a map or plan from spoken directions and match them to labelled options.",
+        "instruction": "Describe a coherent map or plan layout in the prompts, give labelled location options in SharedOptions, and make every answer depend on spoken directional clues in the transcript.",
+    },
+    "FORM_COMPLETION": {
+        "skills": ("Listening",),
+        "description": "Complete form fields such as names, dates, contact details, and requirements from the recording.",
+        "instruction": "Create a realistic form with clearly labelled fields. The transcript must state every missing value explicitly; answers must contain no more than TWO WORDS.",
+    },
+}
+
+
+@_node_guard("question_type_node")
+def question_type_node(state: QuizState) -> Dict[str, Any]:
+    """Resolve the requested IELTS question format into detailed generation guidance."""
+    skill = str(state.get("selected_skill", "")).strip()
+    if skill not in ("Reading", "Listening"):
+        return {
+            "selected_question_type": None,
+            "selected_question_type_skill": None,
+            "question_type_description": "",
+            "question_type_instruction": "",
+        }
+
+    code = str(state.get("selected_question_type") or "MULTIPLE_CHOICE_SINGLE").strip().upper()
+    details = _QUESTION_TYPE_DETAILS.get(code)
+    if details is None or skill not in details["skills"]:
+        raise ValueError(f"Question type '{code}' is not supported for {skill}.")
+
+    return {
+        "selected_question_type": code,
+        "selected_question_type_skill": skill,
+        "question_type_description": details["description"],
+        "question_type_instruction": details["instruction"],
+    }
+
 
 @_node_guard("orchestrator_node")
 def orchestrator_node(state: QuizState) -> Dict[str, Any]:
@@ -657,11 +774,71 @@ def _parse_llm_json_payload(raw_response: Any) -> Dict[str, Any]:
     return json.loads(text)
 
 
-def _normalize_backend_payload(skill_name: str, payload: Dict[str, Any], source_text: str, topic: str, level: str) -> Dict[str, Any]:
+def _normalize_backend_payload(
+    skill_name: str,
+    payload: Dict[str, Any],
+    source_text: str,
+    topic: str,
+    level: str,
+    selected_question_type: Optional[str] = None,
+) -> Dict[str, Any]:
     cleaned_payload = dict(payload or {})
     cleaned_payload["Skill"] = skill_name
     cleaned_payload["Title"] = str(cleaned_payload.get("Title") or f"IELTS {skill_name}: {topic}")
     cleaned_payload["Level"] = str(cleaned_payload.get("Level") or level)
+
+    def normalize_question_groups(groups: Any) -> List[Any]:
+        normalized_groups = list(groups or [])
+        for idx, group in enumerate(normalized_groups):
+            if not isinstance(group, dict):
+                continue
+
+            question_type_code = selected_question_type or group.get("QuestionTypeCode") or "MULTIPLE_CHOICE_SINGLE"
+            if selected_question_type:
+                group.pop("QuestionTypeID", None)
+                details = _QUESTION_TYPE_DETAILS.get(selected_question_type, {})
+                group.setdefault("Instruction", details.get("description") or f"Question set {idx + 1}")
+                word_limit = {
+                    "SENTENCE_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "SUMMARY_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "NOTE_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "TABLE_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "FLOW_CHART_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "DIAGRAM_LABEL_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "FORM_COMPLETION": "NO MORE THAN TWO WORDS",
+                    "SHORT_ANSWER": "NO MORE THAN THREE WORDS",
+                }.get(selected_question_type)
+                if word_limit:
+                    group.setdefault("WordLimit", word_limit)
+            else:
+                group.setdefault("QuestionTypeID", 1)
+
+            group["QuestionTypeCode"] = question_type_code
+            group.setdefault("Instruction", f"Question set {idx + 1}")
+            group.setdefault("OrderIndex", idx + 1)
+            shared_options = group.get("SharedOptions")
+            if isinstance(shared_options, (dict, list)):
+                group["SharedOptions"] = json.dumps(shared_options, ensure_ascii=False)
+
+            questions = list(group.get("Questions") or [])
+            for q_idx, question in enumerate(questions):
+                if not isinstance(question, dict):
+                    continue
+                question["QuestionType"] = question_type_code
+                question["QuestionTypeCode"] = question_type_code
+                if selected_question_type:
+                    question.pop("QuestionTypeID", None)
+                else:
+                    question.setdefault("QuestionTypeID", 1)
+                question.setdefault("OrderIndex", q_idx + 1)
+                options = question.get("Options")
+                if isinstance(options, (dict, list)):
+                    question["Options"] = json.dumps(options, ensure_ascii=False)
+                correct_answer = question.get("CorrectAnswer")
+                if isinstance(correct_answer, list):
+                    question["CorrectAnswer"] = ",".join(str(answer) for answer in correct_answer)
+            group["Questions"] = questions
+        return normalized_groups
 
     if skill_name == "Reading":
         passage = dict(cleaned_payload.get("Passage") or {})
@@ -671,30 +848,13 @@ def _normalize_backend_payload(skill_name: str, payload: Dict[str, Any], source_
         passage.setdefault("Level", "Academic")
         passage.setdefault("WordCount", len((source_text or "").split()))
         cleaned_payload["Passage"] = passage
-
-        groups = list(cleaned_payload.get("QuestionGroups") or [])
-        for idx, group in enumerate(groups):
-            if not isinstance(group, dict):
-                continue
-            group.setdefault("QuestionTypeID", 1)
-            group.setdefault("QuestionTypeCode", "MULTIPLE_CHOICE_SINGLE")
-            group.setdefault("Instruction", f"Question set {idx + 1}")
-            group.setdefault("OrderIndex", idx + 1)
-            questions = list(group.get("Questions") or [])
-            for q_idx, question in enumerate(questions):
-                if isinstance(question, dict):
-                    question.setdefault("QuestionType", "MULTIPLE_CHOICE_SINGLE")
-                    question.setdefault("QuestionTypeID", 1)
-                    question.setdefault("QuestionTypeCode", "MULTIPLE_CHOICE_SINGLE")
-                    question.setdefault("OrderIndex", q_idx + 1)
-            group["Questions"] = questions
-        cleaned_payload["QuestionGroups"] = groups
+        cleaned_payload["QuestionGroups"] = normalize_question_groups(cleaned_payload.get("QuestionGroups"))
 
     elif skill_name == "Listening":
         section = dict(cleaned_payload.get("ListeningSection") or {})
         section.setdefault("Transcript", source_text or "Generated from source document.")
         cleaned_payload["ListeningSection"] = section
-        cleaned_payload["QuestionGroups"] = list(cleaned_payload.get("QuestionGroups") or [])
+        cleaned_payload["QuestionGroups"] = normalize_question_groups(cleaned_payload.get("QuestionGroups"))
 
     elif skill_name == "Speaking":
         cleaned_payload.setdefault("WebSource", "Generated from source material")
@@ -741,6 +901,9 @@ def _build_skill_prompt(
     summary = context_bundle.get("summary", "")
     key_concepts = context_bundle.get("key_concepts", [])
     source_preview = context_bundle.get("source_text_preview", "")
+    question_type_code = context_bundle.get("question_type_code") or "MULTIPLE_CHOICE_SINGLE"
+    question_type_description = context_bundle.get("question_type_description", "")
+    question_type_instruction = context_bundle.get("question_type_instruction", "")
 
     key_concepts_str = ", ".join(key_concepts) if key_concepts else "N/A"
 
@@ -763,8 +926,18 @@ def _build_skill_prompt(
     )
 
     if skill_name == "Reading":
+        task_format_guidance = ""
+        if context_bundle.get("question_type_skill") == skill_name:
+            task_format_guidance = (
+                f"Required question type: {question_type_code}\n"
+                f"What this format tests: {question_type_description}\n"
+                f"Format-specific construction rules: {question_type_instruction}\n"
+                "For matching formats, serialize SharedOptions as a JSON-encoded string, not an array.\n"
+                "Use this format for every question in the generated group; do not substitute another question type.\n\n"
+            )
         return (
             base +
+            task_format_guidance +
             "Generate an IELTS Academic Reading test. Schema:\n"
             "{\n"
             '  "Title": string,\n'
@@ -779,18 +952,17 @@ def _build_skill_prompt(
             '  },\n'
             '  "QuestionGroups": [\n'
             '    {\n'
-            '      "QuestionTypeID": 1,\n'
-            '      "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",\n'
+            f'      "QuestionTypeCode": "{question_type_code}",\n'
             '      "Instruction": string,\n'
-            '      "WordLimit": null,\n'
+            '      "SharedOptions": string or null,\n'
+            '      "WordLimit": string or null,\n'
             '      "OrderIndex": 1,\n'
             '      "Questions": [\n'
             '        {\n'
-            '          "QuestionType": "MULTIPLE_CHOICE_SINGLE",\n'
-            '          "QuestionTypeID": 1,\n'
-            '          "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",\n'
+            f'          "QuestionType": "{question_type_code}",\n'
+            f'          "QuestionTypeCode": "{question_type_code}",\n'
             '          "Content": string,    // Non-empty question text\n'
-            '          "Options": "A. ... | B. ... | C. ... | D. ...",  // 4 options\n'
+            '          "Options": string or null,  // Four choices for multiple choice; otherwise null unless required by the format\n'
             '          "CorrectAnswer": string,  // e.g. "A"\n'
             '          "Explanation": string,    // Brief reason\n'
             '          "OrderIndex": number\n'
@@ -802,8 +974,18 @@ def _build_skill_prompt(
         )
 
     if skill_name == "Listening":
+        task_format_guidance = ""
+        if context_bundle.get("question_type_skill") == skill_name:
+            task_format_guidance = (
+                f"Required question type: {question_type_code}\n"
+                f"What this format tests: {question_type_description}\n"
+                f"Format-specific construction rules: {question_type_instruction}\n"
+                "For matching formats, serialize SharedOptions as a JSON-encoded string, not an array.\n"
+                "Use this format for every question in the generated group; do not substitute another question type.\n\n"
+            )
         return (
             base +
+            task_format_guidance +
             "Generate an IELTS Listening section. Create a realistic dialogue or monologue transcript (300-500 words) "
             "related to the topic, then write comprehension questions. Schema:\n"
             "{\n"
@@ -815,18 +997,17 @@ def _build_skill_prompt(
             '  },\n'
             '  "QuestionGroups": [\n'
             '    {\n'
-            '      "QuestionTypeID": 1,\n'
-            '      "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",\n'
+            f'      "QuestionTypeCode": "{question_type_code}",\n'
             '      "Instruction": string,\n'
-            '      "WordLimit": null,\n'
+            '      "SharedOptions": string or null,\n'
+            '      "WordLimit": string or null,\n'
             '      "OrderIndex": 1,\n'
             '      "Questions": [\n'
             '        {\n'
-            '          "QuestionType": "MULTIPLE_CHOICE_SINGLE",\n'
-            '          "QuestionTypeID": 1,\n'
-            '          "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",\n'
+            f'          "QuestionType": "{question_type_code}",\n'
+            f'          "QuestionTypeCode": "{question_type_code}",\n'
             '          "Content": string,    // Non-empty comprehension question\n'
-            '          "Options": "A. ... | B. ... | C. ... | D. ...",\n'
+            '          "Options": string or null,\n'
             '          "CorrectAnswer": string,\n'
             '          "Explanation": string,\n'
             '          "OrderIndex": number\n'
@@ -910,6 +1091,20 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
         prior_results={},
     )
 
+    context_bundle = dict(context_bundle)
+    if state.get("selected_question_type_skill") == skill_name:
+        context_bundle.update({
+            "question_type_skill": skill_name,
+            "question_type_code": state.get("selected_question_type"),
+            "question_type_description": state.get("question_type_description", ""),
+            "question_type_instruction": state.get("question_type_instruction", ""),
+        })
+    selected_question_type = (
+        state.get("selected_question_type")
+        if state.get("selected_question_type_skill") == skill_name
+        else None
+    )
+
     prompt = _build_skill_prompt(skill_name, context_bundle, _compact_prior_context(state))
 
     last_exc: Optional[Exception] = None
@@ -925,7 +1120,14 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
                 user_tier=state.get("user_tier", "Gold"),
             )
             parsed = _parse_llm_json_payload(raw_payload)
-            result = _normalize_backend_payload(skill_name, parsed, source_text, topic, target_level)
+            result = _normalize_backend_payload(
+                skill_name,
+                parsed,
+                source_text,
+                topic,
+                target_level,
+                selected_question_type=selected_question_type,
+            )
             _trace(f"LLM {skill_name.upper()} RESULT", {
                 "title": result.get("Title"),
                 "question_count": sum(
@@ -1076,17 +1278,11 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
 
     if listening:
         consolidated_groups.extend(listening.get("QuestionGroups", []))
-        if not combined_passage:
-            combined_passage = {
-                "Title": f"Audio Transcript: {topic}",
-                "Content": listening.get("ListeningSection", {}).get("Transcript", ""),
-                "Topic": topic,
-                "Level": level_enum,
-                "WordCount": len(listening.get("ListeningSection", {}).get("Transcript", "").split())
-            }
 
     if combined_passage:
         combined_passage = {**combined_passage, "Level": level_enum}
+
+    listening_section = (listening or {}).get("ListeningSection") or {}
 
     # Consolidated Quiz Object
     quiz_title = state.get("quiz_title") or f"IELTS Comprehensive Assessment: {topic} ({', '.join(teachers)})"
@@ -1097,6 +1293,11 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
         "Source": "AI",
         "CreatorId": state.get("user_id"),
         "Passage": combined_passage,
+        "Audio": {
+            "AudioURL": None,
+            "Transcript": listening_section.get("Transcript", ""),
+            "Topic": topic,
+        } if listening else None,
         "QuestionGroups": consolidated_groups,
         "SpeakingSection": speaking,
         "WritingSection": writing.get("WritingSection") if writing else None,
@@ -1188,6 +1389,7 @@ def build_quiz_graph():
     workflow.add_node("guardrail_node", guardrail_node)
     workflow.add_node("preprocess_node", preprocess_node)
     workflow.add_node("summarizer_node", summarizer_node)
+    workflow.add_node("question_type_node", question_type_node)
     workflow.add_node("orchestrator_node", orchestrator_node)
 
     # Teacher nodes
@@ -1214,7 +1416,8 @@ def build_quiz_graph():
         }
     )
     workflow.add_edge("preprocess_node", "summarizer_node")
-    workflow.add_edge("summarizer_node", "orchestrator_node")
+    workflow.add_edge("summarizer_node", "question_type_node")
+    workflow.add_edge("question_type_node", "orchestrator_node")
 
     # Routing from Orchestrator: execute teacher nodes based on allocated_teachers
     def route_teachers(state: QuizState):
@@ -1308,6 +1511,7 @@ def run_quiz_pipeline(
     llm: Any = None,
     tool_params: Optional[Dict[str, Any]] = None,
     allowed_skills: Optional[List[str]] = None,
+    selected_question_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Execute the compiled LangGraph workflow with input parameters.
@@ -1324,6 +1528,10 @@ def run_quiz_pipeline(
         "raw_input": raw_input,
         "input_type": input_type,
         "selected_skill": selected_skill,
+        "selected_question_type": selected_question_type,
+        "selected_question_type_skill": None,
+        "question_type_description": "",
+        "question_type_instruction": "",
         "user_tier": user_tier,
         "allowed_skills": allowed_skills or ["Reading", "Listening"],
         "user_id": user_id,

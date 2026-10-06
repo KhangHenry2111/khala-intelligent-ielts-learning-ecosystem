@@ -50,7 +50,7 @@ export function ReviewItem({ item, expanded, submitting, onToggle, onDecision, o
           ) : (
             <h3>{item.title}</h3>
           )}
-          <p>{item.passageTitle || item.topic || 'IELTS Reading'} · {item.level || 'Intermediate'}</p>
+          <p>{item.passageTitle || item.topic || (item.skill === 'Listening' ? 'IELTS Listening' : 'IELTS Reading')} · {item.level || 'Intermediate'}</p>
         </div>
         <button type="button" className="detail-toggle" onClick={onToggle}>
           {expanded ? 'Hide details' : 'View details'}
@@ -103,7 +103,8 @@ export function ReviewItem({ item, expanded, submitting, onToggle, onDecision, o
             </strong></div>
           </div>
           <div className="detail-section">
-            <span>Passage</span>
+            <span>{item.skill === 'Listening' ? 'Listening audio and transcript' : 'Passage'}</span>
+            {item.audioURL && <p><a href={item.audioURL} target="_blank" rel="noreferrer">Open listening audio</a></p>}
             {isEditing ? (
               <textarea 
                 name="passageContent" 
@@ -113,7 +114,7 @@ export function ReviewItem({ item, expanded, submitting, onToggle, onDecision, o
                 style={{ width: '100%', marginTop: '8px', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', fontFamily: 'inherit' }}
               />
             ) : (
-              <p>{item.passageContent || 'No passage content available.'}</p>
+              <p>{item.passageContent || item.transcript || (item.audioURL ? 'Audio is available at the link above.' : 'No passage content available.')}</p>
             )}
           </div>
           {isEditing && (

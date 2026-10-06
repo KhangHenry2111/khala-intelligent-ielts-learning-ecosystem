@@ -30,7 +30,12 @@ from AI_quiz.tool import (
     export_to_word,
     export_to_excel
 )
-from AI_quiz.graph import run_quiz_pipeline, backend_sync_node, reading_teacher_node
+from AI_quiz.graph import (
+    run_quiz_pipeline,
+    backend_sync_node,
+    question_type_node,
+    reading_teacher_node,
+)
 from AI_quiz.quiz_api import app
 
 client = TestClient(app)
@@ -273,6 +278,27 @@ def test_api_health():
     assert response.status_code == 200
 
 
+def test_api_generate_forwards_selected_question_type(monkeypatch):
+    observed = {}
+
+    def fake_pipeline(**kwargs):
+        observed.update(kwargs)
+        return {
+            "guardrail_passed": False,
+            "guardrail_reason": "rejected by test",
+        }
+
+    monkeypatch.setattr("AI_quiz.quiz_api.run_quiz_pipeline", fake_pipeline)
+    response = client.post("/api/quiz/generate", json={
+        "document": SAMPLE_ACADEMIC_DOC,
+        "skill": "Reading",
+        "question_type": "MATCHING_HEADINGS",
+    })
+
+    assert response.status_code == 200
+    assert observed["selected_question_type"] == "MATCHING_HEADINGS"
+
+
 def test_reading_teacher_uses_llm_generated_content_not_hardcoded_text():
     """LLM-generated content must be used instead of baked-in sample exam text."""
 
@@ -322,6 +348,82 @@ def test_reading_teacher_uses_llm_generated_content_not_hardcoded_text():
     content = result["reading_result"]["Passage"]["Content"].lower()
     assert "campus innovation" in content
     assert "empirical findings confirm" not in json.dumps(result).lower()
+
+
+def test_question_type_node_resolves_reading_and_rejects_incompatible_types():
+    reading = question_type_node({
+        "selected_skill": "Reading",
+        "selected_question_type": "MATCHING_HEADINGS",
+    })
+    assert reading["selected_question_type_skill"] == "Reading"
+    assert "central idea" in reading["question_type_description"]
+    assert "shared list" in reading["question_type_instruction"]
+
+    listening = question_type_node({
+        "selected_skill": "Listening",
+        "selected_question_type": "MAP_PLAN_LABELING",
+    })
+    assert listening["selected_question_type_skill"] == "Listening"
+    assert "spoken directions" in listening["question_type_description"]
+
+    invalid = question_type_node({
+        "selected_skill": "Reading",
+        "selected_question_type": "FORM_COMPLETION",
+    })
+    assert invalid["status"] == "ERROR"
+    assert "not supported for Reading" in invalid["error_message"]
+
+
+def test_reading_teacher_uses_selected_question_type_in_prompt_and_payload():
+    observed = {}
+
+    class FakeLLM:
+        def invoke(self, values):
+            observed["prompt"] = values["prompt"]
+            return json.dumps({
+                "Title": "Matching Headings Practice",
+                "Passage": {"Content": "A passage about research methods."},
+                "QuestionGroups": [{
+                    "QuestionTypeID": 1,
+                    "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
+                    "Questions": [{
+                        "QuestionTypeID": 1,
+                        "QuestionTypeCode": "MULTIPLE_CHOICE_SINGLE",
+                        "Content": "Which heading matches paragraph A?",
+                        "CorrectAnswer": "ii",
+                        "Explanation": "It summarizes the paragraph.",
+                    }],
+                }],
+            })
+
+    result = reading_teacher_node({
+        "selected_question_type": "MATCHING_HEADINGS",
+        "selected_question_type_skill": "Reading",
+        "question_type_description": "Match each paragraph to its central idea.",
+        "question_type_instruction": "Provide a shared list of labelled headings.",
+        "detected_topic": "Research Methods",
+        "cleaned_text": "Research methods and evidence.",
+        "target_level": "Band 7.0 - 7.5",
+        "context_bundle": {
+            "summary": "A text about research methods.",
+            "topic": "Research Methods",
+            "level": "Advanced",
+            "tier": "Gold",
+            "source_text_preview": "Research methods and evidence.",
+            "key_concepts": ["research"],
+        },
+        "tool_params": {},
+        "llm": FakeLLM(),
+    })
+
+    group = result["reading_result"]["QuestionGroups"][0]
+    question = group["Questions"][0]
+    assert "MATCHING_HEADINGS" in observed["prompt"]
+    assert "shared list of labelled headings" in observed["prompt"]
+    assert group["QuestionTypeCode"] == "MATCHING_HEADINGS"
+    assert question["QuestionTypeCode"] == "MATCHING_HEADINGS"
+    assert "QuestionTypeID" not in group
+    assert "QuestionTypeID" not in question
 
 
 def test_direct_save_json_endpoint_posts_backend_payload(monkeypatch):
@@ -438,3 +540,29 @@ def test_backend_sync_uses_default_config_when_tool_params_missing(monkeypatch):
 
     result = backend_sync_node(state)
     assert result["backend_save_result"]["quizId"] == "q-123"
+
+
+def test_backend_sync_saves_listening_transcript_as_audio_not_reading_passage(monkeypatch):
+    observed = {}
+
+    def fake_backend(payload, url, timeout=20):
+        observed["payload"] = payload
+        return {"quizId": "q-listening-1"}
+
+    monkeypatch.setattr("AI_quiz.graph.post_to_sql_backend", fake_backend)
+    result = backend_sync_node({
+        "selected_skill": "Listening",
+        "detected_topic": "Campus Orientation",
+        "allocated_teachers": ["Listening"],
+        "target_level": "Band 6.5 - 7.0",
+        "listening_result": {
+            "ListeningSection": {"Transcript": "A student asks for directions around campus."},
+            "QuestionGroups": [],
+        },
+        "tool_params": {},
+    })
+
+    assert result["backend_save_result"]["quizId"] == "q-listening-1"
+    assert observed["payload"]["Passage"] is None
+    assert observed["payload"]["Audio"]["AudioURL"] is None
+    assert observed["payload"]["Audio"]["Transcript"] == "A student asks for directions around campus."

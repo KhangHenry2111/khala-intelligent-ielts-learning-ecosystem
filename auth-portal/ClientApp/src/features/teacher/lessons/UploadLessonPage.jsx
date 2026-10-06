@@ -4,6 +4,7 @@ import { useAuth } from '../../../shared/auth/AuthContext';
 import { quizApi } from '../../../shared/api';
 import { SectionHead } from '../../../shared/ui/SectionHead';
 import { lessonList as defaultLessons } from '../data';
+import { LISTENING_QUESTION_TYPES, READING_QUESTION_TYPES } from './questionTypes';
 
 const STORAGE_KEY = 'teacher.lesson.list';
 const fixedAnswerOptions = {
@@ -19,36 +20,8 @@ const completionTypes = new Set([
   'TABLE_COMPLETION', 'FLOW_CHART_COMPLETION', 'DIAGRAM_LABEL_COMPLETION', 'FORM_COMPLETION', 'SHORT_ANSWER',
 ]);
 
-const readingFormats = [
-  ['MULTIPLE_CHOICE_SINGLE', 'Multiple choice: one answer'],
-  ['MULTIPLE_CHOICE_MULTI', 'Multiple choice: multiple answers'],
-  ['TRUE_FALSE_NOT_GIVEN', 'True / False / Not Given'],
-  ['YES_NO_NOT_GIVEN', 'Yes / No / Not Given'],
-  ['MATCHING_HEADINGS', 'Matching headings'],
-  ['MATCHING_INFORMATION', 'Matching information to paragraphs'],
-  ['MATCHING_FEATURES', 'Matching features'],
-  ['MATCHING_SENTENCE_ENDINGS', 'Matching sentence endings'],
-  ['SENTENCE_COMPLETION', 'Sentence completion'],
-  ['SUMMARY_COMPLETION', 'Summary completion'],
-  ['NOTE_COMPLETION', 'Note completion'],
-  ['TABLE_COMPLETION', 'Table completion'],
-  ['FLOW_CHART_COMPLETION', 'Flow-chart completion'],
-  ['DIAGRAM_LABEL_COMPLETION', 'Diagram labelling'],
-  ['SHORT_ANSWER', 'Short-answer questions'],
-];
-const listeningFormats = [
-  ['MULTIPLE_CHOICE_SINGLE', 'Multiple choice: one answer'],
-  ['MULTIPLE_CHOICE_MULTI', 'Multiple choice: multiple answers'],
-  ['MATCHING_FEATURES', 'Matching'],
-  ['MAP_PLAN_LABELING', 'Map / plan labelling'],
-  ['FORM_COMPLETION', 'Form completion'],
-  ['NOTE_COMPLETION', 'Note completion'],
-  ['TABLE_COMPLETION', 'Table completion'],
-  ['FLOW_CHART_COMPLETION', 'Flow-chart completion'],
-  ['SUMMARY_COMPLETION', 'Summary completion'],
-  ['SENTENCE_COMPLETION', 'Sentence completion'],
-  ['SHORT_ANSWER', 'Short-answer questions'],
-];
+const readingFormats = READING_QUESTION_TYPES.map(({ code, label }) => [code, label]);
+const listeningFormats = LISTENING_QUESTION_TYPES.map(({ code, label }) => [code, label]);
 
 const blankQuestion = (difficulty = 'Intermediate') => ({
   content: '', options: ['', '', '', ''], correctAnswer: '', explanation: '', difficulty,

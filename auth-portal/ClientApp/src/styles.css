@@ -320,6 +320,7 @@ body {
 .skill-picker button, .quiz-exports button { cursor: pointer; }
 .skill-picker button.selected { background: var(--secondary-color); color: #062b20; border-color: transparent; font-weight: 700; }
 .quiz-generator textarea { resize: vertical; min-height: 150px; }
+.question-type-description { color: var(--text-secondary); line-height: 1.5; }
 .quiz-status { color: #6ee7b7; }
 .quiz-result { margin-top: 24px; }
 .quiz-result h2 { margin: 8px 0 14px; font-family: var(--font-heading); }

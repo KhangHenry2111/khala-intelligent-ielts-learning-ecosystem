@@ -3,6 +3,7 @@ import { aiQuizApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { userRank } from '../../../shared/lib/roles';
 import { FeatureShell } from '../../../shared/ui/FeatureShell';
+import { getQuestionTypesForSkill } from '../../teacher/lessons/questionTypes';
 import { QuizGeneratorForm } from './components/QuizGeneratorForm';
 import { QuizPreview } from './components/QuizPreview';
 
@@ -11,11 +12,17 @@ const quotas = { bronze: '8 per month', silver: '60 per month', gold: '250 per m
 export function AiQuizPage() {
   const { user } = useAuth();
   const [skill, setSkill] = useState('Reading');
+  const [questionType, setQuestionType] = useState('MULTIPLE_CHOICE_SINGLE');
   const [difficulty, setDifficulty] = useState('Intermediate');
   const [content, setContent] = useState('');
   const [file, setFile] = useState(null);
   const [quiz, setQuiz] = useState(null);
   const [status, setStatus] = useState('');
+
+  function handleSkillChange(nextSkill) {
+    setSkill(nextSkill);
+    setQuestionType(getQuestionTypesForSkill(nextSkill)[0]?.code || '');
+  }
 
   async function submitQuiz(event) {
     event.preventDefault();
@@ -27,6 +34,7 @@ export function AiQuizPage() {
             document: `data:${file.fileType};base64,${file.contentBase64}`,
             input_type: 'image',
             skill: skill === 'All' ? 'All' : skill,
+            question_type: questionType || null,
             tier: user?.rank || user?.details?.Rank || 'Bronze',
             user_id: user?.id || null,
           }
@@ -34,6 +42,7 @@ export function AiQuizPage() {
             document: content,
             input_type: 'text',
             skill: skill === 'All' ? 'All' : skill,
+            question_type: questionType || null,
             tier: user?.rank || user?.details?.Rank || 'Bronze',
             user_id: user?.id || null,
           };
@@ -81,11 +90,13 @@ export function AiQuizPage() {
     >
       <QuizGeneratorForm
         skill={skill}
+        questionType={questionType}
         difficulty={difficulty}
         content={content}
         status={status}
         file={file}
-        onSkillChange={setSkill}
+        onSkillChange={handleSkillChange}
+        onQuestionTypeChange={setQuestionType}
         onDifficultyChange={setDifficulty}
         onContentChange={setContent}
         onFileChange={handleFileChange}

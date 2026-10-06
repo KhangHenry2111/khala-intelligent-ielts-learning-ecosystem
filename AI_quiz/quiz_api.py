@@ -66,6 +66,10 @@ class GenerateQuizRequest(BaseModel):
         default="Reading",
         description="Target skill: 'Reading', 'Speaking', 'Writing', 'Listening', or 'All' / 'Toàn bộ'."
     )
+    question_type: Optional[str] = Field(
+        default=None,
+        description="Optional IELTS Reading or Listening question format code."
+    )
     tier: str = Field(
         default="Gold",
         description="User tier: 'Bronze' / 'Đồng', 'Silver' / 'Bạc', or 'Gold' / 'Vàng'."
@@ -133,10 +137,10 @@ def health_check():
 def get_supported_skills():
     return {
         "skills": [
-            {"id": "Reading", "name": "IELTS Reading", "description": "Academic passage with up to 3 randomized IELTS question types"},
+            {"id": "Reading", "name": "IELTS Reading", "description": "Academic passage with the selected IELTS question type, answers, and explanations"},
             {"id": "Speaking", "name": "IELTS Speaking", "description": "Web-searched Task 1, 2, 3 questions, cue cards, and vocabulary"},
             {"id": "Writing", "name": "IELTS Writing", "description": "Matplotlib Task 1 chart generator + Band 8+ model essay for Task 2"},
-            {"id": "Listening", "name": "IELTS Listening", "description": "Audio dialog script, comprehension questions, and timestamp explanations"},
+            {"id": "Listening", "name": "IELTS Listening", "description": "Audio dialogue or monologue with the selected IELTS question type, transcript, and explanations"},
             {"id": "All", "name": "Toàn bộ 4 kỹ năng (Full Test)", "description": "All 4 skills orchestrated based on user tier"}
         ]
     }
@@ -208,6 +212,7 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
         final_state = run_quiz_pipeline(
             raw_input=req.document,
             selected_skill=req.skill,
+            selected_question_type=req.question_type,
             input_type=req.input_type,
             user_tier=req.tier,
             user_id=req.user_id,

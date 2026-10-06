@@ -91,6 +91,8 @@ public class QuizModerationItem
     public int? WordCount { get; set; }
     public int QuestionCount { get; set; }
     public string? PassageContent { get; set; }
+    public string? AudioURL { get; set; }
+    public string? Transcript { get; set; }
     public string? ModerationStatus { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }

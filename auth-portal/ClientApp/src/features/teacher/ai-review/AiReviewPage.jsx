@@ -8,6 +8,7 @@ export function AiReviewPage() {
   const { user } = useAuth();
   const [reviewQueue, setReviewQueue] = useState([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [expandedQuizId, setExpandedQuizId] = useState(null);
 
@@ -16,9 +17,15 @@ export function AiReviewPage() {
     async function loadQueue() {
       try {
         const payload = await quizApi.moderationQueue();
-        if (active) setReviewQueue(payload.items || []);
-      } catch {
-        if (active) setReviewQueue([]);
+        if (active) {
+          setReviewQueue(payload.items || []);
+          setLoadError('');
+        }
+      } catch (error) {
+        if (active) {
+          setReviewQueue([]);
+          setLoadError(error.message || 'Could not load the AI review queue.');
+        }
       } finally {
         if (active) setLoadingQueue(false);
       }
@@ -74,6 +81,7 @@ export function AiReviewPage() {
     <div className="dashboard-container">
       <section className="glass-card">
         <SectionHead title="AI quiz moderation" actionLabel="Bulk review" />
+        {loadError && <p className="teacher-quiz-notice error" role="alert">{loadError}</p>}
         <div className="queue-list">
           {loadingQueue ? (
             <div className="queue-item empty-state">Loading review queue...</div>
