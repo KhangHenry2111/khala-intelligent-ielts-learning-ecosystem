@@ -14,17 +14,13 @@ using Microsoft.Extensions.Configuration;
 public class QuizController : ControllerBase
 {
     private readonly string? _connectionString;
-    private readonly IAuthService? _authService;
 
     public QuizController(IConfiguration config)
     {
         _connectionString = config.GetConnectionString("Default") ?? Environment.GetEnvironmentVariable("USER_DB_CONNECTION");
     }
 
-    public QuizController(IConfiguration config, IAuthService authService) : this(config)
-    {
-        _authService = authService;
-    }
+    private IAuthService? AuthService => HttpContext?.RequestServices.GetService(typeof(IAuthService)) as IAuthService;
 
     private SqlConnection GetConnection()
     {
@@ -159,7 +155,7 @@ public class QuizController : ControllerBase
             {
                 var token = Request.Headers.Authorization.ToString();
                 if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
-                var sessionUser = _authService?.GetSession(token);
+                var sessionUser = AuthService?.GetSession(token);
                 if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase))
                 {
                     return Unauthorized(new SaveQuizResponse { Success = false, Message = "Sign in as a teacher before creating a quiz." });
@@ -485,7 +481,7 @@ public class QuizController : ControllerBase
     {
         var token = Request.Headers.Authorization.ToString();
         if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
-        var sessionUser = _authService?.GetSession(token);
+        var sessionUser = AuthService?.GetSession(token);
         if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
             || !Guid.TryParse(sessionUser.Id, out var teacherId))
         {
@@ -497,13 +493,13 @@ public class QuizController : ControllerBase
             using var conn = GetConnection();
             conn.Open();
             const string sql = @"
-                SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt,
+                SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt, m.QuizID,
                        COUNT(q.QuestionID) AS QuestionCount
                 FROM Material m
                 LEFT JOIN Quiz quiz ON quiz.QuizID = m.QuizID
                 LEFT JOIN Question q ON q.QuizID = quiz.QuizID
                 WHERE m.TeacherID = @TeacherID AND m.QuizID IS NOT NULL
-                GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt
+                GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt, m.QuizID
                 ORDER BY m.CreatedAt DESC";
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
@@ -522,7 +518,8 @@ public class QuizController : ControllerBase
                     price = reader.GetDecimal(6),
                     status = reader.GetString(7),
                     createdAt = reader.GetDateTime(8),
-                    questionCount = reader.GetInt32(9)
+                    questionCount = reader.GetInt32(9),
+                    quizId = reader.IsDBNull(10) ? null : reader.GetGuid(10).ToString()
                 });
             }
             return Ok(new { success = true, items });
@@ -531,6 +528,241 @@ public class QuizController : ControllerBase
         {
             return StatusCode(500, new { success = false, message = ex.Message });
         }
+    }
+
+    [HttpGet("content")]
+    public IActionResult GetContent()
+    {
+        var session = GetCurrentSession();
+        if (session == null || !string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase))
+            return Unauthorized(new { success = false, message = "Sign in as an admin to manage content." });
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            const string sql = @"SELECT m.MaterialID, m.QuizID, m.Title, m.Skill, m.Level, m.Status, m.CreatedAt,
+                       t.FullName, COUNT(qn.QuestionID) AS QuestionCount
+                FROM Material m
+                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
+                LEFT JOIN Question qn ON qn.QuizID = m.QuizID
+                GROUP BY m.MaterialID, m.QuizID, m.Title, m.Skill, m.Level, m.Status, m.CreatedAt, t.FullName
+                ORDER BY m.CreatedAt DESC";
+            using var cmd = new SqlCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read()) items.Add(new {
+                materialId = reader.GetGuid(0).ToString(), quizId = reader.IsDBNull(1) ? null : reader.GetGuid(1).ToString(),
+                title = reader.GetString(2), skill = reader.GetString(3), level = reader.GetString(4),
+                status = reader.GetString(5), createdAt = reader.GetDateTime(6), teacherName = reader.IsDBNull(7) ? "" : reader.GetString(7),
+                questionCount = reader.GetInt32(8)
+            });
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpGet("content/{id}")]
+    public IActionResult GetContentDetails(string id)
+    {
+        var session = GetCurrentSession();
+        if (session == null || !string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase))
+            return Unauthorized(new { success = false, message = "Sign in as an admin to view content details." });
+        if (!Guid.TryParse(id, out var materialId))
+            return BadRequest(new { success = false, message = "A valid material id is required." });
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            const string materialSql = @"
+                SELECT m.MaterialID, m.QuizID, m.Title, m.Description, m.Skill, m.Level,
+                       m.FileURL, m.FileType, m.IsFree, m.Price, m.DownloadCount, m.Status, m.CreatedAt,
+                       t.FullName, q.Source, q.ExtraContent,
+                       rp.Title, rp.Content, rp.WordCount, rp.Topic, rp.Level,
+                       la.AudioURL, la.Transcript, la.DurationSeconds
+                FROM Material m
+                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
+                LEFT JOIN Quiz q ON q.QuizID = m.QuizID
+                LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
+                LEFT JOIN ListeningAudio la ON la.AudioID = q.AudioID
+                WHERE m.MaterialID = @MaterialID";
+            Guid? quizId;
+            object material;
+            using (var cmd = new SqlCommand(materialSql, conn))
+            {
+                cmd.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId });
+                using var reader = cmd.ExecuteReader();
+                if (!reader.Read())
+                    return NotFound(new { success = false, message = "Lesson not found." });
+
+                quizId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+                material = new
+                {
+                    materialId = reader.GetGuid(0).ToString(),
+                    quizId = quizId?.ToString(),
+                    title = reader.GetString(2),
+                    description = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    skill = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    level = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    fileUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
+                    fileType = reader.IsDBNull(7) ? null : reader.GetString(7),
+                    isFree = reader.GetBoolean(8),
+                    price = reader.GetDecimal(9),
+                    downloadCount = reader.GetInt32(10),
+                    status = reader.GetString(11),
+                    createdAt = reader.GetDateTime(12),
+                    teacherName = reader.IsDBNull(13) ? null : reader.GetString(13),
+                    source = reader.IsDBNull(14) ? null : reader.GetString(14),
+                    extraContent = reader.IsDBNull(15) ? null : reader.GetString(15),
+                    passage = reader.IsDBNull(17) ? null : new
+                    {
+                        title = reader.IsDBNull(16) ? null : reader.GetString(16),
+                        content = reader.GetString(17),
+                        wordCount = reader.IsDBNull(18) ? (int?)null : reader.GetInt32(18),
+                        topic = reader.IsDBNull(19) ? null : reader.GetString(19),
+                        level = reader.IsDBNull(20) ? null : reader.GetString(20),
+                    },
+                    audio = reader.IsDBNull(21) && reader.IsDBNull(22) && reader.IsDBNull(23) ? null : new
+                    {
+                        audioUrl = reader.IsDBNull(21) ? null : reader.GetString(21),
+                        transcript = reader.IsDBNull(22) ? null : reader.GetString(22),
+                        durationSeconds = reader.IsDBNull(23) ? (int?)null : reader.GetInt32(23),
+                    },
+                };
+            }
+
+            var sections = new List<object>();
+            var questions = new List<object>();
+            if (quizId.HasValue)
+            {
+                const string sectionSql = @"
+                    SELECT Skill, SectionType, Title, Prompt, Transcript, ModelAnswer, ExtraJson, OrderIndex
+                    FROM QuizSection
+                    WHERE QuizID = @QuizID
+                    ORDER BY OrderIndex";
+                using (var cmd = new SqlCommand(sectionSql, conn))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId.Value });
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        sections.Add(new
+                        {
+                            skill = reader.GetString(0),
+                            sectionType = reader.GetString(1),
+                            title = reader.IsDBNull(2) ? null : reader.GetString(2),
+                            prompt = reader.GetString(3),
+                            transcript = reader.IsDBNull(4) ? null : reader.GetString(4),
+                            modelAnswer = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            extraJson = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            orderIndex = reader.GetInt32(7),
+                        });
+                    }
+                }
+
+                const string questionSql = @"
+                    SELECT q.Content, q.Options, q.CorrectAnswer, q.Explanation, q.OrderIndex,
+                           qt.Code, qt.NameVI, qt.NameEN,
+                           qg.Instruction, qg.SharedOptions, qg.WordLimit, qg.ImageURL,
+                           q.AudioTimestampSeconds
+                    FROM Question q
+                    LEFT JOIN QuestionTypeCatalog qt ON qt.QuestionTypeID = q.QuestionTypeID
+                    LEFT JOIN QuestionGroup qg ON qg.GroupID = q.GroupID
+                    WHERE q.QuizID = @QuizID
+                    ORDER BY ISNULL(qg.OrderIndex, 0), q.OrderIndex";
+                using (var cmd = new SqlCommand(questionSql, conn))
+                {
+                    cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId.Value });
+                    using var reader = cmd.ExecuteReader();
+                    while (reader.Read())
+                    {
+                        questions.Add(new
+                        {
+                            content = reader.GetString(0),
+                            options = reader.IsDBNull(1) ? null : reader.GetString(1),
+                            correctAnswer = reader.IsDBNull(2) ? null : reader.GetString(2),
+                            explanation = reader.IsDBNull(3) ? null : reader.GetString(3),
+                            orderIndex = reader.GetInt32(4),
+                            questionTypeCode = reader.IsDBNull(5) ? null : reader.GetString(5),
+                            questionTypeNameVi = reader.IsDBNull(6) ? null : reader.GetString(6),
+                            questionTypeNameEn = reader.IsDBNull(7) ? null : reader.GetString(7),
+                            instruction = reader.IsDBNull(8) ? null : reader.GetString(8),
+                            sharedOptions = reader.IsDBNull(9) ? null : reader.GetString(9),
+                            wordLimit = reader.IsDBNull(10) ? null : reader.GetString(10),
+                            imageUrl = reader.IsDBNull(11) ? null : reader.GetString(11),
+                            audioTimestampSeconds = reader.IsDBNull(12) ? (int?)null : reader.GetInt32(12),
+                        });
+                    }
+                }
+            }
+
+            return Ok(new { success = true, item = material, sections, questions });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPut("material/{id}/status")]
+    public IActionResult UpdateMaterialStatus(string id, [FromBody] MaterialStatusRequest? req)
+    {
+        var session = GetCurrentSession();
+        if (session == null || (!string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)))
+            return Unauthorized(new { success = false, message = "Sign in to manage content." });
+        if (!Guid.TryParse(id, out var materialId) || req?.Status is not ("Pending" or "Approved" or "Rejected"))
+            return BadRequest(new { success = false, message = "A valid material id and status (Pending, Approved, Rejected) are required." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open();
+            var isAdmin = string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase);
+            using var cmd = new SqlCommand(isAdmin
+                ? "UPDATE Material SET Status = @Status WHERE MaterialID = @Id"
+                : "UPDATE Material SET Status = @Status WHERE MaterialID = @Id AND TeacherID = @TeacherID", conn);
+            cmd.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = req.Status });
+            cmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = materialId });
+            if (!isAdmin)
+            {
+                if (!Guid.TryParse(session.Id, out var teacherId)) return Forbid();
+                cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+            }
+            if (cmd.ExecuteNonQuery() == 0) return NotFound(new { success = false, message = "Material not found." });
+            return Ok(new { success = true, status = req.Status });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpDelete("material/{id}")]
+    public IActionResult DeleteMaterial(string id)
+    {
+        var session = GetCurrentSession();
+        if (session == null || !string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase))
+            return Unauthorized(new { success = false, message = "Sign in as an admin to delete content." });
+        if (!Guid.TryParse(id, out var materialId)) return BadRequest(new { success = false, message = "A valid material id is required." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open();
+            using var tx = conn.BeginTransaction();
+            using (var access = new SqlCommand("DELETE FROM MaterialAccess WHERE MaterialID = @Id", conn, tx))
+            {
+                access.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = materialId });
+                access.ExecuteNonQuery();
+            }
+            using var cmd = new SqlCommand("DELETE FROM Material WHERE MaterialID = @Id AND QuizID IS NULL", conn, tx);
+            cmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = materialId });
+            if (cmd.ExecuteNonQuery() == 0) { tx.Rollback(); return NotFound(new { success = false, message = "Unlinked material not found." }); }
+            tx.Commit();
+            return Ok(new { success = true, message = "Material deleted." });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    private AuthPortal.Models.UserInfo? GetCurrentSession()
+    {
+        var token = Request.Headers.Authorization.ToString();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
+        return AuthService?.GetSession(token);
     }
 
     [HttpGet("moderation-queue")]
@@ -865,6 +1097,10 @@ public class QuizController : ControllerBase
     [HttpDelete("delete/{id}")]
     public IActionResult DeleteQuiz(string id)
     {
+        var session = GetCurrentSession();
+        if (session == null || (!string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)))
+            return Unauthorized(new { success = false, message = "Sign in to delete a lesson." });
         if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var quizId))
         {
             return BadRequest(new { success = false, message = "A valid quiz id is required." });
@@ -887,6 +1123,15 @@ public class QuizController : ControllerBase
                 if (!reader.Read()) return NotFound(new { success = false, message = "Quiz not found." });
                 passageId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
                 audioId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
+            }
+
+            if (string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!Guid.TryParse(session.Id, out var teacherId)) return Forbid();
+                using var ownerCheck = new SqlCommand("SELECT COUNT(1) FROM Material WHERE QuizID = @QuizId AND TeacherID = @TeacherID", conn, tx);
+                ownerCheck.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                ownerCheck.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                if (Convert.ToInt32(ownerCheck.ExecuteScalar()) == 0) return Forbid();
             }
 
             // Delete AIQuizRequest

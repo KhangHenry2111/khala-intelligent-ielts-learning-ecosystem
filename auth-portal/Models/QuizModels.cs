@@ -114,3 +114,8 @@ public class EditQuizRequest
     public string? Topic { get; set; }
     public string? PassageContent { get; set; }
 }
+
+public class MaterialStatusRequest
+{
+    public string Status { get; set; } = "Pending";
+}
