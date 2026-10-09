@@ -77,6 +77,18 @@ public class ModerationDecisionRequest
     public string? TeacherId { get; set; }
 }
 
+public class ReviewQuestionRequest
+{
+    public int QuestionTypeID { get; set; }
+    public string Content { get; set; } = string.Empty;
+    public string? Options { get; set; }
+    public string? CorrectAnswer { get; set; }
+    public string? Explanation { get; set; }
+    public string? Difficulty { get; set; }
+    public int OrderIndex { get; set; }
+    public string? ModerationStatus { get; set; }
+}
+
 public class QuizModerationItem
 {
     public string QuizId { get; set; } = string.Empty;
@@ -94,6 +106,11 @@ public class QuizModerationItem
     public string? AudioURL { get; set; }
     public string? Transcript { get; set; }
     public string? ModerationStatus { get; set; }
+    public string? CreatorId { get; set; }
+    public string? CreatorName { get; set; }
+    public string? ApprovedBy { get; set; }
+    public string? ApproverName { get; set; }
+    public bool CanManage { get; set; }
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 }
 

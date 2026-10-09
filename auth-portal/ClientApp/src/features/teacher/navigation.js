@@ -4,5 +4,5 @@ export const teacherNavItems = [
   { name: 'Lessons', path: '/teacher/lessons' },
   { name: 'Upload quiz', path: '/teacher/upload-quiz' },
   { name: 'Grading', path: '/teacher/grading' },
-  { name: 'AI Review', path: '/teacher/ai-review' },
+  { name: 'Quiz Review', path: '/teacher/ai-review' },
 ];

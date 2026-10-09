@@ -144,3 +144,37 @@ _______________________________________
 - Added an Admin-only lesson detail endpoint and modal for material metadata, passage/transcript, sections and question details.
 - Verified React production build; .NET tests passed 12/12. Local running server has not loaded the new backend route and needs restart for detail data.
 _______________________________________
+
+[Id 8]:
+[Model_name]: Codex
+[Time]: 2026-10-09 06:54
+[Title]: Fix lesson displays and quizzes
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/ClientApp/src/shared/api/quizApi.js
+- auth-portal/ClientApp/src/features/teacher/lessons/LessonsPage.jsx
+- auth-portal/ClientApp/src/features/user/available-quiz/AvailableQuizPage.jsx
+- auth-portal/ClientApp/src/styles.css
+[Description]
+- Đọc yêu cầu và rà soát lỗi hiển thị bài giảng teacher/user sau refactor SQL.
+- Bổ sung endpoint và trang thư viện bài học đã duyệt cho user với metadata, số quiz, trạng thái tải/lỗi/rỗng và giao diện responsive.
+_______________________________________
+
+[Id 9]:
+[Model_name]: Codex
+[Time]: 2026-10-09 07:25
+[Title]: Build teacher Quiz Review
+[Status]: In Process
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/Models/QuizModels.cs
+- auth-portal/ClientApp/src/features/teacher/ai-review/AiReviewPage.jsx
+- auth-portal/ClientApp/src/features/teacher/ai-review/components/ReviewItem.jsx
+- auth-portal/ClientApp/src/shared/api/quizApi.js
+- auth-portal/ClientApp/src/features/teacher/navigation.js
+- auth-portal/ClientApp/src/styles.css
+[Description]
+- Đổi AI review thành Quiz Review, bổ sung lọc quiz theo người tạo và thao tác moderation/quản lý dựa trên schema SQL mới.
+- Giữ giới hạn sửa/xóa nội dung quiz ở teacher sở hữu quiz sau khi auto-review từ chối mở rộng quyền xóa quiz của người khác.
+_______________________________________

@@ -11,14 +11,25 @@ export function AiReviewPage() {
   const [loadError, setLoadError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [expandedQuizId, setExpandedQuizId] = useState(null);
+  const [scope, setScope] = useState('all');
+  const [creatorId, setCreatorId] = useState('');
+  const [creators, setCreators] = useState([]);
+  const [repairing, setRepairing] = useState(false);
+  const [notice, setNotice] = useState('');
 
   useEffect(() => {
     let active = true;
     async function loadQueue() {
+      if (scope === 'creator' && !creatorId) {
+        setReviewQueue([]); setLoadingQueue(false); setLoadError('');
+        return;
+      }
       try {
-        const payload = await quizApi.moderationQueue();
+        setLoadingQueue(true);
+        const payload = await quizApi.moderationQueue({ scope, creatorId }, user?.accessToken);
         if (active) {
           setReviewQueue(payload.items || []);
+          setCreators(payload.creators || []);
           setLoadError('');
         }
       } catch (error) {
@@ -32,17 +43,26 @@ export function AiReviewPage() {
     }
     loadQueue();
     return () => { active = false; };
-  }, []);
+  }, [scope, creatorId, user?.accessToken]);
+
+  const handleRepair = async () => {
+    if (!window.confirm('Fill missing creator IDs from the recorded approver/moderator IDs for approved quizzes and content? This writes the updates to SQL.')) return;
+    setRepairing(true); setNotice('');
+    try {
+      const result = await quizApi.repairMissingCreators(user?.accessToken);
+      const totals = result.updated || {};
+      setNotice(`Creator records updated: ${totals.quizzes || 0} quizzes, ${totals.questions || 0} questions, ${totals.passages || 0} passages, ${totals.audios || 0} audio items.`);
+      const payload = await quizApi.moderationQueue({ scope, creatorId }, user?.accessToken);
+      setReviewQueue(payload.items || []); setCreators(payload.creators || []);
+    } catch (error) { setLoadError(error.message || 'Could not repair creator records.'); }
+    finally { setRepairing(false); }
+  };
 
   const handleDecision = async (quizId, status) => {
     setSubmitting(true);
     try {
-      await quizApi.moderationDecision({
-        quizId,
-        status,
-        teacherId: user?.id || user?.userId || user?.details?.Id || null,
-      });
-      setReviewQueue((current) => current.filter((item) => item.quizId !== quizId));
+      await quizApi.moderationDecision({ quizId, status }, user?.accessToken);
+      setReviewQueue((current) => current.map((item) => item.quizId === quizId ? { ...item, status, moderationStatus: status === 'PendingReview' ? 'Pending' : status } : item));
     } catch (error) {
       alert(error.message || 'Unable to update review status');
     } finally {
@@ -54,7 +74,7 @@ export function AiReviewPage() {
     if (!window.confirm("Are you sure you want to delete this quiz?")) return;
     setSubmitting(true);
     try {
-      await quizApi.deleteQuiz(quizId);
+      await quizApi.deleteQuiz(quizId, user?.accessToken);
       setReviewQueue((current) => current.filter((item) => item.quizId !== quizId));
     } catch (error) {
       alert(error.message || 'Unable to delete quiz');
@@ -66,7 +86,7 @@ export function AiReviewPage() {
   const handleEdit = async (quizId, updatedData) => {
     setSubmitting(true);
     try {
-      await quizApi.editQuiz(quizId, updatedData);
+      await quizApi.editQuiz(quizId, updatedData, user?.accessToken);
       setReviewQueue((current) => 
         current.map((item) => item.quizId === quizId ? { ...item, ...updatedData, passageContent: updatedData.passageContent } : item)
       );
@@ -80,13 +100,25 @@ export function AiReviewPage() {
   return (
     <div className="dashboard-container">
       <section className="glass-card">
-        <SectionHead title="AI quiz moderation" actionLabel="Bulk review" />
+        <SectionHead title="Quiz review" actionLabel="Repair missing creators" onAction={handleRepair} />
+        {notice && <p className="teacher-quiz-notice success" role="status">{notice}</p>}
+        {repairing && <p className="content-list-state" role="status">Updating creator records…</p>}
         {loadError && <p className="teacher-quiz-notice error" role="alert">{loadError}</p>}
+        <div className="quiz-review-toolbar">
+          <label htmlFor="quiz-review-scope">Creator filter</label>
+          <select id="quiz-review-scope" value={scope} onChange={(event) => { setScope(event.target.value); setCreatorId(''); }}>
+            <option value="all">All quizzes</option><option value="mine">Created by me</option><option value="unassigned">Missing creator</option><option value="creator">Created by…</option>
+          </select>
+          {scope === 'creator' && <select aria-label="Select quiz creator" value={creatorId} onChange={(event) => setCreatorId(event.target.value)}>
+            <option value="">Select a creator</option>{creators.map((creator) => <option key={creator.id} value={creator.id}>{creator.name} · {creator.id}</option>)}
+          </select>}
+          <span>{reviewQueue.length} quizzes</span>
+        </div>
         <div className="queue-list">
           {loadingQueue ? (
             <div className="queue-item empty-state">Loading review queue...</div>
           ) : reviewQueue.length === 0 ? (
-            <div className="queue-item empty-state">No AI quiz sets are currently pending review.</div>
+            <div className="queue-item empty-state">No quizzes match this creator filter.</div>
           ) : (
             reviewQueue.map((item) => (
               <ReviewItem
@@ -98,6 +130,8 @@ export function AiReviewPage() {
                 onDecision={handleDecision}
                 onDelete={handleDelete}
                 onEdit={handleEdit}
+                token={user?.accessToken}
+                canManage={item.canManage}
               />
             ))
           )}

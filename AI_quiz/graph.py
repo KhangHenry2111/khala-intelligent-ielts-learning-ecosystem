@@ -5,23 +5,23 @@ B1: Ingest & OCR
 B2: Guardrails (Safety & Relevance)
 B3: Data Preprocessing (Cleaning)
 B4: Summarizer Agent (LLM-driven) & Orchestrator (package-based Teacher dispatch)
-    -> Each teacher receives a shared context_bundle (summary, topic, key_concepts,
-       prior_results) to avoid duplication and preserve cross-agent context.
+    -> Each teacher receives a shared context_bundle plus a compact summary of what
+       earlier teachers generated (built from state) to avoid duplication.
     -> Backend sync (POST to C# API; Draft status)
 B5: Word / Excel Export & Knowledge Base Storage
 
 Reliability notes:
     - Every node is wrapped by `_node_guard`: if the pipeline has already failed
       (status == "ERROR") the node is skipped, and any exception raised inside a
-      node is caught, logged, and converted into a normal ERROR state instead of
-      crashing the whole graph.
-    - Teacher nodes never fall back to placeholder content: if the LLM fails after
-      retries the pipeline ends with status "ERROR" and nothing is persisted.
+      node is caught, logged, and converted into a normal ERROR state.
+    - Teacher output is validated (`_validate_payload`). Invalid / empty / placeholder
+      output raises inside the retry loop; after 3 attempts the pipeline ends with
+      status "ERROR" and nothing is persisted. There are no placeholder fallbacks.
+    - Options / SharedOptions are always stored as valid JSON strings (DB has ISJSON checks).
+    - Backend save failure ends the pipeline with "ERROR" (no export, no knowledge doc).
     - Skill access is decided by `allowed_skills` (computed by the backend from the
       user's Package), not by the caller-supplied `user_tier`.
-    - Every AI-generated answer (raw LLM response + each node's final generated
-      payload) is printed to the console via `_print_ai_answer`, independent of
-      whatever logging configuration the host app uses.
+    - Every AI-generated answer is printed to the console via `_print_ai_answer`.
 """
 
 import os
@@ -56,9 +56,7 @@ from langgraph.graph import StateGraph, END
 logger = logging.getLogger("ielts.ai_quiz")
 
 # Ensure this logger always prints somewhere, even if the host app never calls
-# logging.basicConfig(). Without a handler, logger.info(...) is silently dropped
-# by Python's logging defaults (only WARNING+ reaches the "handler of last
-# resort"), so all of the [AI TRACE] calls below were previously invisible.
+# logging.basicConfig().
 if not logger.handlers:
     _console_handler = logging.StreamHandler()
     _console_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
@@ -125,9 +123,8 @@ def _trace(label: str, value: Any = None) -> None:
 
 def _print_ai_answer(label: str, content: Any) -> None:
     """
-    Explicitly print AI-generated content to stdout. This is a plain `print`
-    (not the logger) on purpose, so the generated answer is guaranteed to show
-    up on the console regardless of logging configuration/level.
+    Explicitly print AI-generated content to stdout. Plain `print` (not the logger)
+    on purpose, so it shows up regardless of logging configuration/level.
     """
     banner = f" AI ANSWER: {label} "
     print(f"\n{banner:=^80}")
@@ -210,6 +207,7 @@ def _load_default_llm() -> Optional[OpenRouterLLM]:
 class QuizState(TypedDict):
     # Inputs
     raw_input: Union[str, bytes]
+    raw_input_name: Optional[str]    # Original file name (helps extract_document_text pick a parser)
     input_type: str                  # "text" | "image" | "pdf"
     selected_skill: str              # "Reading" | "Speaking" | "Writing" | "Listening" | "All"
     selected_question_type: Optional[str]
@@ -237,10 +235,10 @@ class QuizState(TypedDict):
     summary: str
     detected_topic: str
     target_level: str
-    key_concepts: List[str]           # Key vocabulary/concepts extracted by LLM or heuristic
+    key_concepts: List[str]
     allocated_teachers: List[str]
 
-    # Shared context bundle passed across all teacher agents to preserve cross-agent context
+    # Shared context bundle passed to all teacher agents
     context_bundle: Optional[Dict[str, Any]]
 
     # Teacher Results
@@ -270,11 +268,9 @@ class QuizState(TypedDict):
 def _node_guard(node_name: str):
     """
     Wrap a node so that:
-      - if the pipeline has already failed (status == "ERROR"), the node is
-        skipped instead of doing (and possibly failing on) more work; and
-      - any unhandled exception raised inside the node is caught, logged, and
-        turned into a normal ERROR state update instead of crashing the whole
-        LangGraph run.
+      - if the pipeline has already failed (status == "ERROR"), the node is skipped;
+      - any unhandled exception inside the node is caught, logged, and turned into
+        a normal ERROR state update instead of crashing the whole LangGraph run.
     """
     def decorator(fn):
         @wraps(fn)
@@ -310,9 +306,8 @@ def _build_context_bundle(
     tier: str,
     source_text: str,
     key_concepts: List[str],
-    prior_results: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Build the shared context bundle passed between all teacher agents."""
+    """Build the shared context bundle passed to all teacher agents."""
     return {
         "summary": summary,
         "topic": topic,
@@ -320,14 +315,13 @@ def _build_context_bundle(
         "tier": tier,
         "source_text_preview": source_text[:1500],   # Compact preview for prompts
         "key_concepts": key_concepts,
-        "prior_results": prior_results or {},
     }
 
 
 def _compact_prior_context(state: "QuizState") -> str:
     """
-    Return a compact JSON string of what teacher agents have already generated.
-    Used to inject into subsequent teacher prompts so they avoid duplicating content.
+    Compact JSON of what earlier teacher agents already generated, built directly
+    from state. Injected into later teacher prompts so they avoid duplicating content.
     """
     prior: Dict[str, Any] = {}
 
@@ -384,6 +378,11 @@ def ingest_node(state: QuizState) -> Dict[str, Any]:
         "preview": extracted[:500],
         "has_error": extracted.startswith("[OCR_ERROR]")
     })
+
+    if extracted.startswith("[OCR_ERROR]"):
+        return {"extracted_text": extracted, "status": "ERROR", "error_message": extracted}
+    if not extracted.strip():
+        return {"extracted_text": "", "status": "ERROR", "error_message": "No text could be extracted from the input."}
 
     return {
         "extracted_text": extracted,
@@ -508,7 +507,7 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
     """
     LLM-driven summarizer: extracts summary, topic, target_level, and key_concepts.
     Falls back to heuristic keyword matching when no LLM is available.
-    Builds the initial context_bundle shared across all teacher agents.
+    Builds the shared context_bundle used by all teacher agents.
     """
     _trace("TOOL CALLED: summarizer_node")
     cleaned = state.get("cleaned_text", "")
@@ -520,22 +519,18 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
     target_level = "Band 7.0 - 7.5 (Advanced / Academic)"
     key_concepts: List[str] = []
 
-    # --- Attempt LLM-driven analysis ---
     used_fallback = state.get("used_fallback", False)
     if llm is not None:
         for attempt in range(3):
             try:
-                # Limit source text to avoid token overflow while preserving meaning
-                source_preview = cleaned[:4000] if len(cleaned) > 4000 else cleaned
+                source_preview = cleaned[:4000]
                 raw_response = tool._invoke_llm(
                     llm,
                     _SUMMARIZER_PROMPT,
                     source_text=source_preview,
                 )
                 text_resp = str(raw_response).strip()
-                # Strip markdown fences if present
                 text_resp = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_resp, flags=re.I).strip()
-                # Extract JSON object
                 first_brace = text_resp.find("{")
                 last_brace = text_resp.rfind("}")
                 if first_brace != -1 and last_brace > first_brace:
@@ -571,7 +566,6 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
     if not key_concepts:
         key_concepts = _heuristic_key_concepts(cleaned, topic)
 
-    # Build the initial shared context_bundle for downstream teacher nodes
     context_bundle = _build_context_bundle(
         summary=summary,
         topic=topic,
@@ -579,7 +573,6 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
         tier=tier,
         source_text=cleaned,
         key_concepts=key_concepts,
-        prior_results={},
     )
 
     _print_ai_answer("Summarizer output (summary / topic / level / key concepts)", {
@@ -601,9 +594,17 @@ def summarizer_node(state: QuizState) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Node 5: Orchestrator Agent (B4 - Package-based Skill Routing)
+# Node 5: Question type resolution + Orchestrator (B4 - Package-based Skill Routing)
 # --------------------------------------------------------------------------
 _ALL_SKILLS = ["Reading", "Listening", "Speaking", "Writing"]
+# Execution order of teachers (Speaking/Writing run before Listening, which is last)
+_TEACHER_ORDER = ["Reading", "Speaking", "Writing", "Listening"]
+_TEACHER_NODES = {
+    "Reading": "reading_teacher_node",
+    "Speaking": "speaking_teacher_node",
+    "Writing": "writing_teacher_node",
+    "Listening": "listening_teacher_node",
+}
 
 _QUESTION_TYPE_DETAILS = {
     "MULTIPLE_CHOICE_SINGLE": {
@@ -693,12 +694,38 @@ _QUESTION_TYPE_DETAILS = {
     },
 }
 
+_WORD_LIMITS = {
+    "SENTENCE_COMPLETION": "NO MORE THAN TWO WORDS",
+    "SUMMARY_COMPLETION": "NO MORE THAN TWO WORDS",
+    "NOTE_COMPLETION": "NO MORE THAN TWO WORDS",
+    "TABLE_COMPLETION": "NO MORE THAN TWO WORDS",
+    "FLOW_CHART_COMPLETION": "NO MORE THAN TWO WORDS",
+    "DIAGRAM_LABEL_COMPLETION": "NO MORE THAN TWO WORDS",
+    "FORM_COMPLETION": "NO MORE THAN TWO WORDS",
+    "SHORT_ANSWER": "NO MORE THAN THREE WORDS",
+}
+
+# Types whose Options must be a JSON array of choices
+_NEEDS_OPTIONS = {"MULTIPLE_CHOICE_SINGLE", "MULTIPLE_CHOICE_MULTI"}
+# Types whose group must carry a shared option list
+_NEEDS_SHARED_OPTIONS = {
+    "MATCHING_HEADINGS", "MATCHING_INFORMATION", "MATCHING_FEATURES",
+    "MATCHING_SENTENCE_ENDINGS", "MAP_PLAN_LABELING",
+}
+
+
+def _canonical_skill(name: Any) -> Optional[str]:
+    """Case-insensitive skill match -> canonical skill name or None."""
+    s = str(name or "").strip().lower()
+    return next((k for k in _ALL_SKILLS if k.lower() == s), None)
+
 
 @_node_guard("question_type_node")
 def question_type_node(state: QuizState) -> Dict[str, Any]:
     """Resolve the requested IELTS question format into detailed generation guidance."""
-    skill = str(state.get("selected_skill", "")).strip()
+    skill = _canonical_skill(state.get("selected_skill"))
     if skill not in ("Reading", "Listening"):
+        # Speaking / Writing / All: no single question type applies
         return {
             "selected_question_type": None,
             "selected_question_type_skill": None,
@@ -722,7 +749,7 @@ def question_type_node(state: QuizState) -> Dict[str, Any]:
 @_node_guard("orchestrator_node")
 def orchestrator_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: orchestrator_node")
-    selected = state.get("selected_skill", "Reading").strip()
+    selected = str(state.get("selected_skill", "Reading")).strip()
     # Least privilege by default; the backend passes the real entitlement from Package.
     allowed = set(state.get("allowed_skills") or ["Reading", "Listening"])
 
@@ -752,7 +779,7 @@ def orchestrator_node(state: QuizState) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Node 6: Teacher Execution Nodes (B4)
+# Payload parsing / normalization / validation
 # --------------------------------------------------------------------------
 def _parse_llm_json_payload(raw_response: Any) -> Dict[str, Any]:
     """Convert LLM output into a JSON dictionary. Accepts plain JSON, code fences, or nested strings."""
@@ -774,127 +801,184 @@ def _parse_llm_json_payload(raw_response: Any) -> Dict[str, Any]:
     return json.loads(text)
 
 
-def _normalize_backend_payload(
+def _json_text_or_none(value: Any, what: str) -> Optional[str]:
+    """
+    Return value as a valid JSON string (or None). list/dict are dumped; a string must
+    already be valid JSON, otherwise ValueError (so the retry loop asks the LLM again).
+    """
+    if value is None:
+        return None
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False) if value else None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        json.loads(text)
+    except ValueError:
+        raise ValueError(f"{what} is not valid JSON: {text[:80]}")
+    return text
+
+
+def _normalize_question_groups(groups: Any, selected_question_type: Optional[str]) -> List[Any]:
+    normalized_groups = list(groups or [])
+    for idx, group in enumerate(normalized_groups):
+        if not isinstance(group, dict):
+            raise ValueError("QuestionGroup must be an object.")
+
+        code = str(
+            selected_question_type or group.get("QuestionTypeCode") or "MULTIPLE_CHOICE_SINGLE"
+        ).strip().upper()
+        if code not in _QUESTION_TYPE_DETAILS:
+            raise ValueError(f"Unknown QuestionTypeCode '{code}'.")
+
+        # The backend resolves QuestionTypeCode -> QuestionTypeID via QuestionTypeCatalog.Code;
+        # never send a hardcoded ID.
+        group.pop("QuestionTypeID", None)
+        group["QuestionTypeCode"] = code
+        group["Instruction"] = str(
+            group.get("Instruction") or _QUESTION_TYPE_DETAILS[code]["description"]
+        ).strip()
+        group["OrderIndex"] = idx + 1
+        if code in _WORD_LIMITS:
+            group["WordLimit"] = group.get("WordLimit") or _WORD_LIMITS[code]
+        group["SharedOptions"] = _json_text_or_none(group.get("SharedOptions"), "SharedOptions")
+
+        questions = list(group.get("Questions") or [])
+        for q_idx, question in enumerate(questions):
+            if not isinstance(question, dict):
+                raise ValueError("Question must be an object.")
+            question.pop("QuestionTypeID", None)
+            question["QuestionType"] = code
+            question["QuestionTypeCode"] = code
+            question["OrderIndex"] = q_idx + 1
+            question["Options"] = _json_text_or_none(question.get("Options"), "Options")
+            answer = question.get("CorrectAnswer")
+            if isinstance(answer, list):
+                answer = ",".join(str(a).strip() for a in answer)
+            question["CorrectAnswer"] = str(answer or "").strip()
+            question["Content"] = str(question.get("Content") or "").strip()
+            question["Explanation"] = str(question.get("Explanation") or "").strip()
+        group["Questions"] = questions
+    return normalized_groups
+
+
+def _validate_question_groups(groups: List[Any]) -> None:
+    total = 0
+    for group in groups:
+        code = group.get("QuestionTypeCode")
+        if code in _NEEDS_SHARED_OPTIONS and not group.get("SharedOptions"):
+            raise ValueError(f"{code} requires SharedOptions.")
+        for q in group.get("Questions", []):
+            for field in ("Content", "CorrectAnswer", "Explanation"):
+                if not q.get(field):
+                    raise ValueError(f"Question has empty '{field}'.")
+            if code in _NEEDS_OPTIONS:
+                options = json.loads(q["Options"]) if q.get("Options") else None
+                if not isinstance(options, list) or len(options) < 2:
+                    raise ValueError(f"{code} requires Options as a JSON array of choices.")
+            total += 1
+    if total < 4:
+        raise ValueError(f"Only {total} questions generated; at least 4 required.")
+
+
+def _require_text(value: Any, field: str, min_words: int = 1) -> str:
+    text = str(value or "").strip()
+    if len(text.split()) < min_words:
+        raise ValueError(f"'{field}' is empty or too short.")
+    return text
+
+
+def _require_str_list(value: Any, field: str, min_items: int) -> List[str]:
+    items = [str(v).strip() for v in (value or []) if str(v).strip()]
+    if len(items) < min_items:
+        raise ValueError(f"'{field}' needs at least {min_items} items.")
+    return items
+
+
+def _normalize_and_validate_payload(
     skill_name: str,
     payload: Dict[str, Any],
-    source_text: str,
     topic: str,
     level: str,
     selected_question_type: Optional[str] = None,
 ) -> Dict[str, Any]:
-    cleaned_payload = dict(payload or {})
-    cleaned_payload["Skill"] = skill_name
-    cleaned_payload["Title"] = str(cleaned_payload.get("Title") or f"IELTS {skill_name}: {topic}")
-    cleaned_payload["Level"] = str(cleaned_payload.get("Level") or level)
-
-    def normalize_question_groups(groups: Any) -> List[Any]:
-        normalized_groups = list(groups or [])
-        for idx, group in enumerate(normalized_groups):
-            if not isinstance(group, dict):
-                continue
-
-            question_type_code = selected_question_type or group.get("QuestionTypeCode") or "MULTIPLE_CHOICE_SINGLE"
-            if selected_question_type:
-                group.pop("QuestionTypeID", None)
-                details = _QUESTION_TYPE_DETAILS.get(selected_question_type, {})
-                group.setdefault("Instruction", details.get("description") or f"Question set {idx + 1}")
-                word_limit = {
-                    "SENTENCE_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "SUMMARY_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "NOTE_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "TABLE_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "FLOW_CHART_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "DIAGRAM_LABEL_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "FORM_COMPLETION": "NO MORE THAN TWO WORDS",
-                    "SHORT_ANSWER": "NO MORE THAN THREE WORDS",
-                }.get(selected_question_type)
-                if word_limit:
-                    group.setdefault("WordLimit", word_limit)
-            else:
-                group.setdefault("QuestionTypeID", 1)
-
-            group["QuestionTypeCode"] = question_type_code
-            group.setdefault("Instruction", f"Question set {idx + 1}")
-            group.setdefault("OrderIndex", idx + 1)
-            shared_options = group.get("SharedOptions")
-            if isinstance(shared_options, (dict, list)):
-                group["SharedOptions"] = json.dumps(shared_options, ensure_ascii=False)
-
-            questions = list(group.get("Questions") or [])
-            for q_idx, question in enumerate(questions):
-                if not isinstance(question, dict):
-                    continue
-                question["QuestionType"] = question_type_code
-                question["QuestionTypeCode"] = question_type_code
-                if selected_question_type:
-                    question.pop("QuestionTypeID", None)
-                else:
-                    question.setdefault("QuestionTypeID", 1)
-                question.setdefault("OrderIndex", q_idx + 1)
-                options = question.get("Options")
-                if isinstance(options, (dict, list)):
-                    question["Options"] = json.dumps(options, ensure_ascii=False)
-                correct_answer = question.get("CorrectAnswer")
-                if isinstance(correct_answer, list):
-                    question["CorrectAnswer"] = ",".join(str(answer) for answer in correct_answer)
-            group["Questions"] = questions
-        return normalized_groups
+    """
+    Normalize a teacher payload into the backend shape and validate it.
+    Raises ValueError for invalid/empty/placeholder content — no defaults are invented
+    for real content (passage, transcript, questions, sample answers).
+    """
+    result = dict(payload or {})
+    level_enum = _band_to_level(level)
+    result["Skill"] = skill_name
+    result["Title"] = str(result.get("Title") or f"IELTS {skill_name}: {topic}").strip()
+    result["Level"] = str(result.get("Level") or level)
 
     if skill_name == "Reading":
-        passage = dict(cleaned_payload.get("Passage") or {})
-        passage.setdefault("Title", f"Academic Reading: {topic}")
-        passage.setdefault("Content", source_text or "Generated from source document.")
-        passage.setdefault("Topic", topic)
-        passage.setdefault("Level", "Academic")
-        passage.setdefault("WordCount", len((source_text or "").split()))
-        cleaned_payload["Passage"] = passage
-        cleaned_payload["QuestionGroups"] = normalize_question_groups(cleaned_payload.get("QuestionGroups"))
+        passage = dict(result.get("Passage") or {})
+        content = _require_text(passage.get("Content"), "Passage.Content", min_words=100)
+        passage["Title"] = str(passage.get("Title") or f"Academic Reading: {topic}").strip()
+        passage["Content"] = content
+        passage["Topic"] = str(passage.get("Topic") or topic).strip()
+        passage["Level"] = level_enum
+        passage["WordCount"] = len(content.split())
+        result["Passage"] = passage
+        result["QuestionGroups"] = _normalize_question_groups(result.get("QuestionGroups"), selected_question_type)
+        _validate_question_groups(result["QuestionGroups"])
 
     elif skill_name == "Listening":
-        section = dict(cleaned_payload.get("ListeningSection") or {})
-        section.setdefault("Transcript", source_text or "Generated from source document.")
-        cleaned_payload["ListeningSection"] = section
-        cleaned_payload["QuestionGroups"] = normalize_question_groups(cleaned_payload.get("QuestionGroups"))
+        section = dict(result.get("ListeningSection") or {})
+        section["Transcript"] = _require_text(section.get("Transcript"), "ListeningSection.Transcript", min_words=100)
+        result["ListeningSection"] = section
+        result["QuestionGroups"] = _normalize_question_groups(result.get("QuestionGroups"), selected_question_type)
+        _validate_question_groups(result["QuestionGroups"])
 
     elif skill_name == "Speaking":
-        cleaned_payload.setdefault("WebSource", "Generated from source material")
-        cleaned_payload.setdefault("Part1", [])
-        cleaned_payload.setdefault("Part2_CueCard", f"Describe a relevant experience related to {topic}.")
-        cleaned_payload.setdefault("Part2_Sample", f"This speaking sample is generated from the source material about {topic}.")
-        cleaned_payload.setdefault("Part3", [])
-        cleaned_payload.setdefault("Vocabulary", [])
+        result["WebSource"] = str(result.get("WebSource") or "Generated from source material")
+        result["Part1"] = _require_str_list(result.get("Part1"), "Part1", 3)
+        result["Part2_CueCard"] = _require_text(result.get("Part2_CueCard"), "Part2_CueCard", 5)
+        result["Part2_Sample"] = _require_text(result.get("Part2_Sample"), "Part2_Sample", 50)
+        result["Part3"] = _require_str_list(result.get("Part3"), "Part3", 3)
+        vocab = [v for v in (result.get("Vocabulary") or []) if isinstance(v, dict) and v.get("term")]
+        result["Vocabulary"] = vocab
 
     elif skill_name == "Writing":
-        section = dict(cleaned_payload.get("WritingSection") or {})
+        section = dict(result.get("WritingSection") or {})
         task1 = dict(section.get("Task1") or {})
         task2 = dict(section.get("Task2") or {})
-        task1.setdefault("Prompt", f"Summarize the main trends and evidence related to {topic}.")
+        task1["Prompt"] = _require_text(task1.get("Prompt"), "Task1.Prompt", 8)
+        task1["ModelAnswer"] = _require_text(task1.get("ModelAnswer"), "Task1.ModelAnswer", 80)
         task1.setdefault("ChartImagePath", "")
-        task1.setdefault("ModelAnswer", f"This model answer is generated from the source material about {topic}.")
-        task2.setdefault("Prompt", f"Discuss the role of {topic} in the modern context.")
-        task2.setdefault("ModelEssay", f"This essay is generated from the source material about {topic}.")
+        task2["Prompt"] = _require_text(task2.get("Prompt"), "Task2.Prompt", 8)
+        task2["ModelEssay"] = _require_text(task2.get("ModelEssay"), "Task2.ModelEssay", 150)
         section["Task1"] = task1
         section["Task2"] = task2
-        cleaned_payload["WritingSection"] = section
+        result["WritingSection"] = section
 
-    return cleaned_payload
+    return result
 
 
 # --------------------------------------------------------------------------
 # Skill Prompt Builders — Context-aware
 # --------------------------------------------------------------------------
+def _format_guidance(context_bundle: Dict[str, Any], skill_name: str) -> str:
+    if context_bundle.get("question_type_skill") != skill_name:
+        return ""
+    return (
+        f"Required question type: {context_bundle.get('question_type_code')}\n"
+        f"What this format tests: {context_bundle.get('question_type_description', '')}\n"
+        f"Format-specific construction rules: {context_bundle.get('question_type_instruction', '')}\n"
+        "For matching formats, SharedOptions must be a JSON array of strings (e.g. [\"A. ...\", \"B. ...\"]).\n"
+        "Use this format for every question in the generated group; do not substitute another question type.\n\n"
+    )
+
 
 def _build_skill_prompt(
     skill_name: str,
     context_bundle: Dict[str, Any],
     prior_context_str: str,
 ) -> str:
-    """
-    Build a rich, context-aware prompt for each skill teacher agent.
-    Each prompt carries:
-      - context_bundle: summary, topic, level, tier, key_concepts, source_text_preview
-      - prior_context_str: compact JSON of what previous teachers have already generated
-    """
+    """Build a context-aware prompt for each skill teacher agent."""
     topic = context_bundle.get("topic", "General Academic")
     level = context_bundle.get("level", "Band 7.0 - 7.5")
     tier = context_bundle.get("tier", "Gold")
@@ -902,8 +986,6 @@ def _build_skill_prompt(
     key_concepts = context_bundle.get("key_concepts", [])
     source_preview = context_bundle.get("source_text_preview", "")
     question_type_code = context_bundle.get("question_type_code") or "MULTIPLE_CHOICE_SINGLE"
-    question_type_description = context_bundle.get("question_type_description", "")
-    question_type_instruction = context_bundle.get("question_type_instruction", "")
 
     key_concepts_str = ", ".join(key_concepts) if key_concepts else "N/A"
 
@@ -925,19 +1007,30 @@ def _build_skill_prompt(
         f"--- TASK ---\n"
     )
 
+    question_group_schema = (
+        '  "QuestionGroups": [\n'
+        '    {\n'
+        f'      "QuestionTypeCode": "{question_type_code}",\n'
+        '      "Instruction": string,\n'
+        '      "SharedOptions": [string] or null,   // JSON array, never a plain string\n'
+        '      "WordLimit": string or null,\n'
+        '      "Questions": [\n'
+        '        {\n'
+        f'          "QuestionTypeCode": "{question_type_code}",\n'
+        '          "Content": string,    // Non-empty question text\n'
+        '          "Options": [string] or null,  // JSON array e.g. ["A. ...","B. ...","C. ...","D. ..."] for multiple choice; otherwise null\n'
+        '          "CorrectAnswer": string,  // e.g. "A" (multi-answer: "A,C")\n'
+        '          "Explanation": string     // Brief reason\n'
+        '        }\n'
+        '      ]  // Include at least 4 questions\n'
+        '    }\n'
+        '  ]\n'
+    )
+
     if skill_name == "Reading":
-        task_format_guidance = ""
-        if context_bundle.get("question_type_skill") == skill_name:
-            task_format_guidance = (
-                f"Required question type: {question_type_code}\n"
-                f"What this format tests: {question_type_description}\n"
-                f"Format-specific construction rules: {question_type_instruction}\n"
-                "For matching formats, serialize SharedOptions as a JSON-encoded string, not an array.\n"
-                "Use this format for every question in the generated group; do not substitute another question type.\n\n"
-            )
         return (
             base +
-            task_format_guidance +
+            _format_guidance(context_bundle, skill_name) +
             "Generate an IELTS Academic Reading test. Schema:\n"
             "{\n"
             '  "Title": string,\n'
@@ -946,46 +1039,16 @@ def _build_skill_prompt(
             '  "Passage": {\n'
             '    "Title": string,\n'
             '    "Content": string,  // Full passage 250-400 words drawn from or inspired by the source text\n'
-            '    "Topic": string,\n'
-            '    "Level": "Academic",\n'
-            '    "WordCount": number\n'
+            '    "Topic": string\n'
             '  },\n'
-            '  "QuestionGroups": [\n'
-            '    {\n'
-            f'      "QuestionTypeCode": "{question_type_code}",\n'
-            '      "Instruction": string,\n'
-            '      "SharedOptions": string or null,\n'
-            '      "WordLimit": string or null,\n'
-            '      "OrderIndex": 1,\n'
-            '      "Questions": [\n'
-            '        {\n'
-            f'          "QuestionType": "{question_type_code}",\n'
-            f'          "QuestionTypeCode": "{question_type_code}",\n'
-            '          "Content": string,    // Non-empty question text\n'
-            '          "Options": string or null,  // Four choices for multiple choice; otherwise null unless required by the format\n'
-            '          "CorrectAnswer": string,  // e.g. "A"\n'
-            '          "Explanation": string,    // Brief reason\n'
-            '          "OrderIndex": number\n'
-            '        }\n'
-            '      ]  // Include at least 4 questions\n'
-            '    }\n'
-            '  ]\n'
+            + question_group_schema +
             "}"
         )
 
     if skill_name == "Listening":
-        task_format_guidance = ""
-        if context_bundle.get("question_type_skill") == skill_name:
-            task_format_guidance = (
-                f"Required question type: {question_type_code}\n"
-                f"What this format tests: {question_type_description}\n"
-                f"Format-specific construction rules: {question_type_instruction}\n"
-                "For matching formats, serialize SharedOptions as a JSON-encoded string, not an array.\n"
-                "Use this format for every question in the generated group; do not substitute another question type.\n\n"
-            )
         return (
             base +
-            task_format_guidance +
+            _format_guidance(context_bundle, skill_name) +
             "Generate an IELTS Listening section. Create a realistic dialogue or monologue transcript (300-500 words) "
             "related to the topic, then write comprehension questions. Schema:\n"
             "{\n"
@@ -995,26 +1058,7 @@ def _build_skill_prompt(
             '  "ListeningSection": {\n'
             '    "Transcript": string  // 300-500 word dialogue/monologue grounded in the source topic\n'
             '  },\n'
-            '  "QuestionGroups": [\n'
-            '    {\n'
-            f'      "QuestionTypeCode": "{question_type_code}",\n'
-            '      "Instruction": string,\n'
-            '      "SharedOptions": string or null,\n'
-            '      "WordLimit": string or null,\n'
-            '      "OrderIndex": 1,\n'
-            '      "Questions": [\n'
-            '        {\n'
-            f'          "QuestionType": "{question_type_code}",\n'
-            f'          "QuestionTypeCode": "{question_type_code}",\n'
-            '          "Content": string,    // Non-empty comprehension question\n'
-            '          "Options": string or null,\n'
-            '          "CorrectAnswer": string,\n'
-            '          "Explanation": string,\n'
-            '          "OrderIndex": number\n'
-            '        }\n'
-            '      ]  // Include at least 4 questions\n'
-            '    }\n'
-            '  ]\n'
+            + question_group_schema +
             "}"
         )
 
@@ -1063,13 +1107,12 @@ def _build_skill_prompt(
 
 
 # --------------------------------------------------------------------------
-# Core LLM Generation with Context (no placeholder fallback)
+# Core LLM Generation with Context (validated, no placeholder fallback)
 # --------------------------------------------------------------------------
-
 def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, Any]:
     """
-    Call the LLM with a context-aware prompt for the given skill.
-    Raises RuntimeError if the LLM is unavailable or fails after 3 attempts;
+    Call the LLM with a context-aware prompt for the given skill and validate the result.
+    Raises RuntimeError if the LLM is unavailable or output stays invalid after 3 attempts;
     `_node_guard` turns that into status == "ERROR" so nothing is persisted.
     """
     llm = state.get("llm")
@@ -1080,30 +1123,24 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
     source_text = state.get("cleaned_text", "")
     target_level = state.get("target_level", "Band 7.0 - 7.5")
 
-    # Pull the shared context bundle; rebuild if missing (defensive)
-    context_bundle = state.get("context_bundle") or _build_context_bundle(
+    context_bundle = dict(state.get("context_bundle") or _build_context_bundle(
         summary=state.get("summary", ""),
         topic=topic,
         level=target_level,
         tier=state.get("user_tier", "Gold"),
         source_text=source_text,
         key_concepts=state.get("key_concepts", []),
-        prior_results={},
-    )
+    ))
 
-    context_bundle = dict(context_bundle)
+    selected_question_type = None
     if state.get("selected_question_type_skill") == skill_name:
+        selected_question_type = state.get("selected_question_type")
         context_bundle.update({
             "question_type_skill": skill_name,
-            "question_type_code": state.get("selected_question_type"),
+            "question_type_code": selected_question_type,
             "question_type_description": state.get("question_type_description", ""),
             "question_type_instruction": state.get("question_type_instruction", ""),
         })
-    selected_question_type = (
-        state.get("selected_question_type")
-        if state.get("selected_question_type_skill") == skill_name
-        else None
-    )
 
     prompt = _build_skill_prompt(skill_name, context_bundle, _compact_prior_context(state))
 
@@ -1115,15 +1152,15 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
                 prompt,
                 skill=skill_name,
                 topic=topic,
-                source_text=source_text,
+                # The prompt already has a preview; cap the full text to limit tokens.
+                source_text=source_text[:4000],
                 target_level=target_level,
                 user_tier=state.get("user_tier", "Gold"),
             )
             parsed = _parse_llm_json_payload(raw_payload)
-            result = _normalize_backend_payload(
+            result = _normalize_and_validate_payload(
                 skill_name,
                 parsed,
-                source_text,
                 topic,
                 target_level,
                 selected_question_type=selected_question_type,
@@ -1148,31 +1185,16 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
 # --------------------------------------------------------------------------
 # Teacher Nodes
 # --------------------------------------------------------------------------
-
 @_node_guard("reading_teacher_node")
 def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Reading test using LLM with context."""
     _trace("TOOL CALLED: reading_teacher_node")
-
     payload = _generate_llm_skill_payload(state, "Reading")
-
-    # Update context_bundle with reading results for downstream teachers
-    bundle = dict(state.get("context_bundle") or {})
-    bundle.setdefault("prior_results", {})
-    groups = payload.get("QuestionGroups", [])
-    bundle["prior_results"]["reading"] = {
-        "passage_title": (payload.get("Passage") or {}).get("Title", ""),
-        "question_count": sum(len(g.get("Questions", [])) for g in groups),
-    }
-
     _print_ai_answer("Reading teacher output", payload)
-
-    return {"reading_result": payload, "context_bundle": bundle}
+    return {"reading_result": payload}
 
 
 @_node_guard("speaking_teacher_node")
 def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Speaking test (Parts 1-3) using LLM with context."""
     _trace("TOOL CALLED: speaking_teacher_node")
     topic = state.get("detected_topic", "General Academic")
 
@@ -1188,78 +1210,58 @@ def speaking_teacher_node(state: QuizState) -> Dict[str, Any]:
         logger.warning("search_web_tool failed for Speaking topic '%s': %s", topic, exc)
 
     payload = _generate_llm_skill_payload(state, "Speaking")
-
-    # Ensure the web source from search is preserved in the final payload
     if web_source != "Generated from source material":
         payload["WebSource"] = web_source
 
-    # Update context_bundle for downstream teachers
-    bundle = dict(state.get("context_bundle") or {})
-    bundle.setdefault("prior_results", {})
-    bundle["prior_results"]["speaking"] = {
-        "part1_sample": (payload.get("Part1") or [])[:2],
-        "cue_card": payload.get("Part2_CueCard", "")[:100],
-    }
-
     _print_ai_answer("Speaking teacher output", payload)
-
-    return {"speaking_result": payload, "context_bundle": bundle}
+    return {"speaking_result": payload}
 
 
 @_node_guard("writing_teacher_node")
 def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Writing test (Task 1 & 2) using LLM with context."""
     _trace("TOOL CALLED: writing_teacher_node")
-
     payload = _generate_llm_skill_payload(state, "Writing")
-
-    # Update context_bundle for downstream teachers
-    bundle = dict(state.get("context_bundle") or {})
-    bundle.setdefault("prior_results", {})
-    ws = payload.get("WritingSection") or {}
-    bundle["prior_results"]["writing"] = {
-        "task1_prompt": (ws.get("Task1") or {}).get("Prompt", "")[:100],
-        "task2_prompt": (ws.get("Task2") or {}).get("Prompt", "")[:100],
-    }
-
     _print_ai_answer("Writing teacher output", payload)
-
-    return {"writing_result": payload, "context_bundle": bundle}
+    return {"writing_result": payload}
 
 
 @_node_guard("listening_teacher_node")
 def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
-    """Generate a full Listening section using LLM with context."""
     _trace("TOOL CALLED: listening_teacher_node")
-
     payload = _generate_llm_skill_payload(state, "Listening")
-
-    # Update context_bundle (Listening is typically last in the chain)
-    bundle = dict(state.get("context_bundle") or {})
-    bundle.setdefault("prior_results", {})
-    groups = payload.get("QuestionGroups", [])
-    bundle["prior_results"]["listening"] = {
-        "transcript_preview": (payload.get("ListeningSection") or {}).get("Transcript", "")[:100],
-        "question_count": sum(len(g.get("Questions", [])) for g in groups),
-    }
-
     _print_ai_answer("Listening teacher output", payload)
-
-    return {"listening_result": payload, "context_bundle": bundle}
+    return {"listening_result": payload}
 
 
 # --------------------------------------------------------------------------
 # Node 7: Consolidation & Backend Sync (B4)
 # --------------------------------------------------------------------------
+def _backend_ok(response: Any) -> bool:
+    """
+    Decide whether the backend accepted the save. Adjust to the real shape returned by
+    `post_to_sql_backend` if it differs (e.g. HTTP status field).
+    """
+    if not isinstance(response, dict) or not response:
+        return False
+    if response.get("success") is False:
+        return False
+    if response.get("error"):
+        return False
+    if str(response.get("status", "")).lower() in ("error", "failed", "fail"):
+        return False
+    return True
+
+
 @_node_guard("backend_sync_node")
 def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     """
-    Consolidate results from all executed teachers into a single payload,
-    then invoke C# backend API via POST. Values are mapped to the DB CHECK constraints
-    (Level: Beginner/Intermediate/Advanced, Source: AI).
+    Consolidate results from all executed teachers into a single payload, then POST
+    to the C# backend. Values are mapped to the DB CHECK constraints
+    (Level: Beginner/Intermediate/Advanced, Source: AI). A failed save ends the
+    pipeline with status "ERROR" (nothing is exported).
     """
     topic = state.get("detected_topic", "General Academic")
-    teachers = state.get("allocated_teachers", ["Reading"])
+    teachers = state.get("allocated_teachers") or ["Reading"]
     tool_params = _resolve_tool_params(state.get("tool_params"))
     level_enum = _band_to_level(state.get("target_level", ""))
 
@@ -1268,23 +1270,29 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     writing = state.get("writing_result")
     listening = state.get("listening_result")
 
-    # Combine question groups and passages
-    consolidated_groups = []
+    # Combine question groups (Reading first, then Listening)
+    consolidated_groups: List[Dict[str, Any]] = []
     combined_passage = None
 
     if reading:
         consolidated_groups.extend(reading.get("QuestionGroups", []))
         combined_passage = reading.get("Passage")
-
     if listening:
         consolidated_groups.extend(listening.get("QuestionGroups", []))
+
+    # Renumber globally: each teacher numbered from 1, which would collide when combined
+    q_no = 0
+    for g_idx, group in enumerate(consolidated_groups, start=1):
+        group["OrderIndex"] = g_idx
+        for question in group.get("Questions", []):
+            q_no += 1
+            question["OrderIndex"] = q_no
 
     if combined_passage:
         combined_passage = {**combined_passage, "Level": level_enum}
 
     listening_section = (listening or {}).get("ListeningSection") or {}
 
-    # Consolidated Quiz Object
     quiz_title = state.get("quiz_title") or f"IELTS Comprehensive Assessment: {topic} ({', '.join(teachers)})"
     consolidated_quiz = {
         "Title": quiz_title,
@@ -1307,6 +1315,15 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     backend_url = tool_params.get("backend_url") or "http://localhost:5000/api/quiz/save"
     _trace("TOOL CALLED: post_to_sql_backend", {"url": backend_url})
     api_response = post_to_sql_backend(consolidated_quiz, url=backend_url)
+    _trace("BACKEND SAVE RESPONSE", api_response)
+
+    if not _backend_ok(api_response):
+        return {
+            "consolidated_quiz": consolidated_quiz,
+            "backend_save_result": api_response,
+            "status": "ERROR",
+            "error_message": f"Backend save failed: {api_response}",
+        }
 
     return {
         "consolidated_quiz": consolidated_quiz,
@@ -1335,11 +1352,9 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
     word_name = f"ielts_quiz_{run_id}.docx"
     excel_name = f"ielts_quiz_{run_id}.xlsx"
 
-    # 1. Export Word
     _trace("TOOL CALLED: export_to_word")
     word_path = export_to_word(quiz, output_path=str(export_dir / word_name))
 
-    # 2. Export Excel
     _trace("TOOL CALLED: export_to_excel")
     excel_path = export_to_excel(quiz, output_path=str(export_dir / excel_name))
 
@@ -1347,7 +1362,6 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
     public_base = os.getenv("IELTS_EXPORT_PUBLIC_URL", "").rstrip("/")
     file_url = f"{public_base}/{word_name}" if public_base else word_name
 
-    # 3. Save to Knowledge Document
     doc_summary = (
         f"IELTS Quiz: {quiz.get('Title')}\n"
         f"Skill: {quiz.get('Skill')} | Level: {quiz.get('Level')}\n"
@@ -1368,12 +1382,13 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
     knowledge_url = tool_params.get("knowledge_url") or "http://localhost:5000/api/quiz/knowledge"
     _trace("TOOL CALLED: save_to_knowledge_base", {"url": knowledge_url})
     kb_res = save_to_knowledge_base(kb_payload, url=knowledge_url)
+    kb_doc_id = kb_res.get("docId") if isinstance(kb_res, dict) else None
 
     status = "SUCCESS_DEGRADED" if state.get("used_fallback") else "SUCCESS"
     return {
         "word_file_path": word_path,
         "excel_file_path": excel_path,
-        "knowledge_doc_id": kb_res.get("docId"),
+        "knowledge_doc_id": kb_doc_id,
         "status": status
     }
 
@@ -1381,10 +1396,19 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
 # --------------------------------------------------------------------------
 # LangGraph Workflow Construction
 # --------------------------------------------------------------------------
+def _next_teacher_node(state: QuizState, after: Optional[str] = None) -> str:
+    """Next allocated teacher in _TEACHER_ORDER (after `after`), else backend_sync_node."""
+    teachers = state.get("allocated_teachers") or []
+    start = 0 if after is None else _TEACHER_ORDER.index(after) + 1
+    for skill in _TEACHER_ORDER[start:]:
+        if skill in teachers:
+            return _TEACHER_NODES[skill]
+    return "backend_sync_node"
+
+
 def build_quiz_graph():
     workflow = StateGraph(QuizState)
 
-    # Add all pipeline nodes
     workflow.add_node("ingest_node", ingest_node)
     workflow.add_node("guardrail_node", guardrail_node)
     workflow.add_node("preprocess_node", preprocess_node)
@@ -1392,102 +1416,45 @@ def build_quiz_graph():
     workflow.add_node("question_type_node", question_type_node)
     workflow.add_node("orchestrator_node", orchestrator_node)
 
-    # Teacher nodes
     workflow.add_node("reading_teacher_node", reading_teacher_node)
     workflow.add_node("speaking_teacher_node", speaking_teacher_node)
     workflow.add_node("writing_teacher_node", writing_teacher_node)
     workflow.add_node("listening_teacher_node", listening_teacher_node)
 
-    # Persistence & Export nodes
     workflow.add_node("backend_sync_node", backend_sync_node)
     workflow.add_node("export_knowledge_node", export_knowledge_node)
 
-    # Entry point
     workflow.set_entry_point("ingest_node")
 
-    # Edges
-    workflow.add_edge("ingest_node", "guardrail_node")
+    # An ingest failure (e.g. OCR error) ends the run immediately
+    workflow.add_conditional_edges(
+        "ingest_node",
+        lambda s: END if s.get("status") == "ERROR" else "guardrail_node",
+        {"guardrail_node": "guardrail_node", END: END},
+    )
     workflow.add_conditional_edges(
         "guardrail_node",
         should_continue_after_guardrail,
-        {
-            "preprocess_node": "preprocess_node",
-            END: END
-        }
+        {"preprocess_node": "preprocess_node", END: END},
     )
     workflow.add_edge("preprocess_node", "summarizer_node")
     workflow.add_edge("summarizer_node", "question_type_node")
     workflow.add_edge("question_type_node", "orchestrator_node")
 
-    # Routing from Orchestrator: execute teacher nodes based on allocated_teachers
-    def route_teachers(state: QuizState):
-        teachers = state.get("allocated_teachers", ["Reading"])
-        if "Reading" in teachers:
-            return "reading_teacher_node"
-        elif "Speaking" in teachers:
-            return "speaking_teacher_node"
-        elif "Writing" in teachers:
-            return "writing_teacher_node"
-        elif "Listening" in teachers:
-            return "listening_teacher_node"
-        return "backend_sync_node"
-
+    # Orchestrator -> first allocated teacher; each teacher -> next allocated teacher
+    all_targets = {name: name for name in [*_TEACHER_NODES.values(), "backend_sync_node"]}
     workflow.add_conditional_edges(
         "orchestrator_node",
-        route_teachers,
-        {
-            "reading_teacher_node": "reading_teacher_node",
-            "speaking_teacher_node": "speaking_teacher_node",
-            "writing_teacher_node": "writing_teacher_node",
-            "listening_teacher_node": "listening_teacher_node",
-            "backend_sync_node": "backend_sync_node"
-        }
+        lambda s: _next_teacher_node(s, None),
+        all_targets,
     )
+    for skill in _TEACHER_ORDER:
+        workflow.add_conditional_edges(
+            _TEACHER_NODES[skill],
+            lambda s, _skill=skill: _next_teacher_node(s, _skill),
+            all_targets,
+        )
 
-    # Chaining between teachers if multiple were allocated
-    def after_reading(state: QuizState):
-        teachers = state.get("allocated_teachers", [])
-        if "Speaking" in teachers:
-            return "speaking_teacher_node"
-        if "Writing" in teachers:
-            return "writing_teacher_node"
-        if "Listening" in teachers:
-            return "listening_teacher_node"
-        return "backend_sync_node"
-
-    def after_speaking(state: QuizState):
-        teachers = state.get("allocated_teachers", [])
-        if "Writing" in teachers:
-            return "writing_teacher_node"
-        if "Listening" in teachers:
-            return "listening_teacher_node"
-        return "backend_sync_node"
-
-    def after_writing(state: QuizState):
-        teachers = state.get("allocated_teachers", [])
-        if "Listening" in teachers:
-            return "listening_teacher_node"
-        return "backend_sync_node"
-
-    workflow.add_conditional_edges("reading_teacher_node", after_reading, {
-        "speaking_teacher_node": "speaking_teacher_node",
-        "writing_teacher_node": "writing_teacher_node",
-        "listening_teacher_node": "listening_teacher_node",
-        "backend_sync_node": "backend_sync_node"
-    })
-
-    workflow.add_conditional_edges("speaking_teacher_node", after_speaking, {
-        "writing_teacher_node": "writing_teacher_node",
-        "listening_teacher_node": "listening_teacher_node",
-        "backend_sync_node": "backend_sync_node"
-    })
-
-    workflow.add_conditional_edges("writing_teacher_node", after_writing, {
-        "listening_teacher_node": "listening_teacher_node",
-        "backend_sync_node": "backend_sync_node"
-    })
-
-    workflow.add_edge("listening_teacher_node", "backend_sync_node")
     workflow.add_edge("backend_sync_node", "export_knowledge_node")
     workflow.add_edge("export_knowledge_node", END)
 
@@ -1512,11 +1479,13 @@ def run_quiz_pipeline(
     tool_params: Optional[Dict[str, Any]] = None,
     allowed_skills: Optional[List[str]] = None,
     selected_question_type: Optional[str] = None,
+    raw_input_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Execute the compiled LangGraph workflow with input parameters.
 
     raw_input must be content (bytes / data URL / plain text), not a file path or URL.
+    raw_input_name is the original file name (optional, helps pick a document parser).
     allowed_skills comes from the backend (Package.HasSpeakingAI / HasWritingAI);
     when omitted only Reading and Listening are allowed.
     """
@@ -1526,6 +1495,7 @@ def run_quiz_pipeline(
         llm = _load_default_llm()
     initial_state: QuizState = {
         "raw_input": raw_input,
+        "raw_input_name": raw_input_name,
         "input_type": input_type,
         "selected_skill": selected_skill,
         "selected_question_type": selected_question_type,
@@ -1565,8 +1535,8 @@ def run_quiz_pipeline(
     try:
         final_state = quiz_app.invoke(initial_state)
     except Exception as exc:
-        # Last-resort catch-all: covers anything raised outside the individual
-        # node guards (e.g. a routing function, or LangGraph itself).
+        # Last-resort catch-all: covers anything raised outside the node guards
+        # (e.g. a routing function, or LangGraph itself).
         logger.exception("Pipeline crashed outside node-level guards")
         final_state = {
             **initial_state,

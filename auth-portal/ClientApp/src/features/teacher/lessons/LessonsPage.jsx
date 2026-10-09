@@ -18,8 +18,8 @@ export function LessonsPage() {
         const savedLessons = (payload.items || []).map((item) => ({
           ...item,
           type: item.skill,
-          price: item.isFree ? 'Free' : `${item.price}`,
-          updated: new Date(item.createdAt).toLocaleDateString(),
+          price: item.isFree ? 'Free' : new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(item.price || 0),
+          updated: item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—',
         }));
         setLessons(savedLessons);
       })
@@ -53,10 +53,10 @@ export function LessonsPage() {
         {loadError && <p className="teacher-quiz-notice error" role="status">{loadError}</p>}
         <div className="list-stack">
           {lessons.map((lesson) => (
-            <div key={lesson.title + lesson.updated} className="info-list-item lesson-item">
+            <div key={lesson.materialId} className="info-list-item lesson-item">
               <div>
                 <h3>{lesson.title}</h3>
-                <p>{lesson.type}{lesson.level ? ` · ${lesson.level}` : ''}{lesson.questionCount ? ` · ${lesson.questionCount} questions` : ''}</p>
+                <p>{lesson.type || 'Lesson'}{lesson.level ? ` · ${lesson.level}` : ''} · {lesson.questionCount ?? 0} questions</p>
               </div>
               <div className="list-meta lesson-meta">
                 <span className="pricing-badge">{lesson.price}</span>
@@ -64,10 +64,11 @@ export function LessonsPage() {
                 <select aria-label={`Status for ${lesson.title}`} value={lesson.status || 'Pending'} onChange={(event) => updateStatus(lesson, event.target.value)}>
                   {['Pending', 'Approved', 'Rejected'].map((status) => <option key={status}>{status}</option>)}
                 </select>
-                <button type="button" className="button-danger" onClick={() => deleteLesson(lesson)}>Delete</button>
+                {lesson.quizId && <button type="button" className="button-danger" onClick={() => deleteLesson(lesson)}>Delete</button>}
               </div>
             </div>
           ))}
+          {!lessons.length && !loadError && <p className="content-list-state">No lessons yet. Upload a lesson to see its quiz and status here.</p>}
         </div>
       </section>
     </div>

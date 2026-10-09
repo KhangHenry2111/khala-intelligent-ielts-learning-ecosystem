@@ -31,6 +31,26 @@ public class QuizController : ControllerBase
         return new SqlConnection(_connectionString);
     }
 
+    private Guid? GetCurrentTeacherId()
+    {
+        var token = Request.Headers.Authorization.ToString();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
+        var session = AuthService?.GetSession(token);
+        return session != null && string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(session.Id, out var teacherId) ? teacherId : null;
+    }
+
+    private static bool TeacherOwnsQuiz(SqlConnection conn, Guid quizId, Guid teacherId, SqlTransaction? tx = null)
+    {
+        using var cmd = new SqlCommand(@"SELECT CASE WHEN EXISTS (
+            SELECT 1 FROM Quiz q WHERE q.QuizID = @QuizID AND
+                (q.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Material m WHERE m.QuizID = q.QuizID AND m.TeacherID = @TeacherID))
+            ) THEN 1 ELSE 0 END", conn, tx);
+        cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+        cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+        return Convert.ToInt32(cmd.ExecuteScalar()) == 1;
+    }
+
     private static object NormalizeQuestionDifficulty(string? level)
     {
         return level?.Trim() switch
@@ -418,6 +438,20 @@ public class QuizController : ControllerBase
                 }
             }
 
+            if (questionsCount > 0)
+            {
+                using var questionAttribution = new SqlCommand(@"
+                    UPDATE Question
+                    SET CreatedBy = COALESCE(CreatedBy, @CreatedBy),
+                        CreatedByType = COALESCE(CreatedByType, @CreatedByType),
+                        ModerationStatus = COALESCE(ModerationStatus, 'Pending')
+                    WHERE QuizID = @QuizID", conn, tx);
+                questionAttribution.Parameters.Add(new SqlParameter("@CreatedBy", SqlDbType.UniqueIdentifier) { Value = Guid.TryParse(req.CreatorId, out var createdById) ? (object)createdById : DBNull.Value });
+                questionAttribution.Parameters.Add(new SqlParameter("@CreatedByType", SqlDbType.NVarChar, 20) { Value = isTeacherQuiz ? "Teacher" : string.IsNullOrWhiteSpace(req.CreatorId) ? "AI" : "User" });
+                questionAttribution.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+                questionAttribution.ExecuteNonQuery();
+            }
+
             if (isTeacherQuiz)
             {
                 if (questionsCount == 0)
@@ -498,7 +532,7 @@ public class QuizController : ControllerBase
                 FROM Material m
                 LEFT JOIN Quiz quiz ON quiz.QuizID = m.QuizID
                 LEFT JOIN Question q ON q.QuizID = quiz.QuizID
-                WHERE m.TeacherID = @TeacherID AND m.QuizID IS NOT NULL
+                WHERE m.TeacherID = @TeacherID
                 GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt, m.QuizID
                 ORDER BY m.CreatedAt DESC";
             using var cmd = new SqlCommand(sql, conn);
@@ -518,8 +552,53 @@ public class QuizController : ControllerBase
                     price = reader.GetDecimal(6),
                     status = reader.GetString(7),
                     createdAt = reader.GetDateTime(8),
-                    questionCount = reader.GetInt32(9),
-                    quizId = reader.IsDBNull(10) ? null : reader.GetGuid(10).ToString()
+                    quizId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
+                    questionCount = reader.GetInt32(10)
+                });
+            }
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpGet("available-lessons")]
+    public IActionResult GetAvailableLessons()
+    {
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            const string sql = @"
+                SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price,
+                       m.CreatedAt, t.FullName, m.QuizID, COUNT(q.QuestionID) AS QuestionCount
+                FROM Material m
+                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
+                LEFT JOIN Question q ON q.QuizID = m.QuizID
+                WHERE m.Status = 'Approved' AND m.QuizID IS NOT NULL
+                GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree,
+                         m.Price, m.CreatedAt, t.FullName, m.QuizID
+                ORDER BY m.CreatedAt DESC";
+            using var cmd = new SqlCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read())
+            {
+                items.Add(new
+                {
+                    materialId = reader.GetGuid(0).ToString(),
+                    title = reader.GetString(1),
+                    description = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    skill = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    level = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    isFree = reader.GetBoolean(5),
+                    price = reader.GetDecimal(6),
+                    createdAt = reader.GetDateTime(7),
+                    teacherName = reader.IsDBNull(8) ? null : reader.GetString(8),
+                    quizId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
+                    questionCount = reader.GetInt32(10)
                 });
             }
             return Ok(new { success = true, items });
@@ -766,8 +845,14 @@ public class QuizController : ControllerBase
     }
 
     [HttpGet("moderation-queue")]
-    public IActionResult GetModerationQueue()
+    public IActionResult GetModerationQueue([FromQuery] string scope = "all", [FromQuery] string? creatorId = null)
     {
+        var currentTeacherId = GetCurrentTeacherId();
+        if (!currentTeacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to review quizzes." });
+        if (scope is not ("all" or "mine" or "unassigned" or "creator"))
+            return BadRequest(new { success = false, message = "Invalid creator filter." });
+        if (scope == "creator" && !Guid.TryParse(creatorId, out _))
+            return BadRequest(new { success = false, message = "Select a valid quiz creator." });
         try
         {
             using var conn = GetConnection();
@@ -779,25 +864,41 @@ public class QuizController : ControllerBase
                        rp.PassageID, rp.Title AS PassageTitle, rp.Topic, rp.WordCount, rp.Content AS PassageContent,
                        COALESCE(rp.ModerationStatus, la.ModerationStatus) AS ModerationStatus,
                        la.AudioURL, la.Transcript,
-                       ISNULL(qc.QuestionCount, 0) AS QuestionCount
+                       ISNULL(qc.QuestionCount, 0) AS QuestionCount,
+                       COALESCE(q.CreatorID, questionCreator.CreatedBy) AS CreatorID,
+                       COALESCE(NULLIF(t.FullName, ''), NULLIF(u.FullName, ''), questionCreator.CreatorName) AS CreatorName,
+                       q.ApprovedBy, approver.FullName AS ApproverName,
+                       CAST(CASE WHEN q.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Material ownMaterial WHERE ownMaterial.QuizID = q.QuizID AND ownMaterial.TeacherID = @TeacherID) THEN 1 ELSE 0 END AS bit) AS CanManage
                 FROM Quiz q
                 LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
                 LEFT JOIN ListeningAudio la ON la.AudioID = q.AudioID
+                LEFT JOIN Teacher t ON t.TeacherID = q.CreatorID
+                LEFT JOIN [User] u ON u.UserID = q.CreatorID
+                LEFT JOIN Teacher approver ON approver.TeacherID = q.ApprovedBy
+                OUTER APPLY (
+                    SELECT TOP 1 question.CreatedBy,
+                        COALESCE(NULLIF(questionTeacher.FullName, ''), NULLIF(questionUser.FullName, '')) AS CreatorName
+                    FROM Question question
+                    LEFT JOIN Teacher questionTeacher ON questionTeacher.TeacherID = question.CreatedBy
+                    LEFT JOIN [User] questionUser ON questionUser.UserID = question.CreatedBy
+                    WHERE question.QuizID = q.QuizID AND question.CreatedBy IS NOT NULL
+                    ORDER BY question.OrderIndex
+                ) questionCreator
                 LEFT JOIN (
                     SELECT QuizID, COUNT(*) AS QuestionCount
                     FROM Question
                     GROUP BY QuizID
                 ) qc ON qc.QuizID = q.QuizID
-                WHERE q.Source = 'AI'
-                  AND q.Skill IN ('Reading', 'Reading+Writing', 'Listening')
-                  AND (
-                        q.Status IN ('Draft', 'PendingReview')
-                        OR rp.ModerationStatus IN ('Pending', 'Rejected')
-                        OR la.ModerationStatus IN ('Pending', 'Rejected')
-                      )
+                WHERE (@Scope = 'all'
+                    OR (@Scope = 'mine' AND (q.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Question ownQuestion WHERE ownQuestion.QuizID = q.QuizID AND ownQuestion.CreatedBy = @TeacherID)))
+                    OR (@Scope = 'unassigned' AND (q.CreatorID IS NULL OR EXISTS (SELECT 1 FROM Question unassignedQuestion WHERE unassignedQuestion.QuizID = q.QuizID AND unassignedQuestion.CreatedBy IS NULL)))
+                    OR (@Scope = 'creator' AND (q.CreatorID = @CreatorID OR EXISTS (SELECT 1 FROM Question selectedQuestion WHERE selectedQuestion.QuizID = q.QuizID AND selectedQuestion.CreatedBy = @CreatorID)))
                 ORDER BY q.CreatedAt DESC";
 
             using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.Add(new SqlParameter("@Scope", SqlDbType.NVarChar, 20) { Value = scope });
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = currentTeacherId.Value });
+            cmd.Parameters.Add(new SqlParameter("@CreatorID", SqlDbType.UniqueIdentifier) { Value = Guid.TryParse(creatorId, out var selectedCreator) ? (object)selectedCreator : DBNull.Value });
             using var reader = cmd.ExecuteReader();
             while (reader.Read())
             {
@@ -818,11 +919,30 @@ public class QuizController : ControllerBase
                     Transcript = reader.IsDBNull(reader.GetOrdinal("Transcript")) ? null : reader.GetString(reader.GetOrdinal("Transcript")),
                     QuestionCount = reader.IsDBNull(reader.GetOrdinal("QuestionCount")) ? 0 : reader.GetInt32(reader.GetOrdinal("QuestionCount")),
                     ModerationStatus = reader.IsDBNull(reader.GetOrdinal("ModerationStatus")) ? null : reader.GetString(reader.GetOrdinal("ModerationStatus")),
+                    CreatorId = reader.IsDBNull(reader.GetOrdinal("CreatorID")) ? null : reader.GetGuid(reader.GetOrdinal("CreatorID")).ToString(),
+                    CreatorName = reader.IsDBNull(reader.GetOrdinal("CreatorName")) ? null : reader.GetString(reader.GetOrdinal("CreatorName")),
+                    ApprovedBy = reader.IsDBNull(reader.GetOrdinal("ApprovedBy")) ? null : reader.GetGuid(reader.GetOrdinal("ApprovedBy")).ToString(),
+                    ApproverName = reader.IsDBNull(reader.GetOrdinal("ApproverName")) ? null : reader.GetString(reader.GetOrdinal("ApproverName")),
+                    CanManage = reader.GetBoolean(reader.GetOrdinal("CanManage")),
                     CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
                 });
             }
-
-            return Ok(new { success = true, items = queue });
+            var creators = new List<object>();
+            using (var creatorsCmd = new SqlCommand(@"
+                SELECT creatorId, creatorName FROM (
+                    SELECT q.CreatorID AS creatorId, COALESCE(NULLIF(t.FullName, ''), NULLIF(u.FullName, '')) AS creatorName
+                    FROM Quiz q LEFT JOIN Teacher t ON t.TeacherID = q.CreatorID LEFT JOIN [User] u ON u.UserID = q.CreatorID
+                    WHERE q.CreatorID IS NOT NULL
+                    UNION
+                    SELECT question.CreatedBy, COALESCE(NULLIF(t.FullName, ''), NULLIF(u.FullName, ''))
+                    FROM Question question LEFT JOIN Teacher t ON t.TeacherID = question.CreatedBy LEFT JOIN [User] u ON u.UserID = question.CreatedBy
+                    WHERE question.CreatedBy IS NOT NULL
+                ) creatorList ORDER BY creatorName", conn))
+            using (var creatorsReader = creatorsCmd.ExecuteReader())
+            {
+                while (creatorsReader.Read()) creators.Add(new { id = creatorsReader.GetGuid(0).ToString(), name = creatorsReader.IsDBNull(1) ? "Unknown creator" : creatorsReader.GetString(1) });
+            }
+            return Ok(new { success = true, items = queue, creators });
         }
         catch (Exception ex)
         {
@@ -833,6 +953,8 @@ public class QuizController : ControllerBase
     [HttpPost("moderation-decision")]
     public IActionResult UpdateModerationDecision([FromBody] ModerationDecisionRequest? req)
     {
+        var authenticatedTeacherId = GetCurrentTeacherId();
+        if (!authenticatedTeacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to moderate quizzes." });
         if (req == null)
         {
             return BadRequest(new { success = false, message = "Review payload is required." });
@@ -872,22 +994,42 @@ public class QuizController : ControllerBase
                 passageId = reader.IsDBNull(0) ? null : reader.GetGuid(0);
                 audioId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             }
-            var teacherId = Guid.TryParse(req.TeacherId, out var teacherGuid) ? teacherGuid : (Guid?)null;
+            var teacherId = authenticatedTeacherId.Value;
 
             using (var tx = conn.BeginTransaction())
             {
                 using (var updateQuiz = new SqlCommand(@"
                     UPDATE Quiz
                     SET Status = @Status,
-                        ApprovedBy = @ApprovedBy,
+                        ApprovedBy = CASE WHEN @Status = 'Approved' THEN @ApprovedBy ELSE ApprovedBy END,
                         ApprovedAt = @ApprovedAt
                     WHERE QuizID = @QuizId", conn, tx))
                 {
                     updateQuiz.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = decisionStatus });
-                    updateQuiz.Parameters.Add(new SqlParameter("@ApprovedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
+                    updateQuiz.Parameters.Add(new SqlParameter("@ApprovedBy", SqlDbType.UniqueIdentifier) { Value = teacherId });
                     updateQuiz.Parameters.Add(new SqlParameter("@ApprovedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                     updateQuiz.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
                     updateQuiz.ExecuteNonQuery();
+                }
+
+                using (var updateQuestions = new SqlCommand(@"
+                    UPDATE Question
+                    SET ModerationStatus = @ModerationStatus,
+                        ModeratedBy = @ModeratedBy,
+                        ModeratedByType = 'Teacher'
+                    WHERE QuizID = @QuizId", conn, tx))
+                {
+                    updateQuestions.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = passageStatus });
+                    updateQuestions.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                    updateQuestions.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                    updateQuestions.ExecuteNonQuery();
+                }
+
+                using (var updateMaterials = new SqlCommand("UPDATE Material SET Status = @Status WHERE QuizID = @QuizId", conn, tx))
+                {
+                    updateMaterials.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = passageStatus });
+                    updateMaterials.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                    updateMaterials.ExecuteNonQuery();
                 }
 
                 if (passageId.HasValue)
@@ -902,8 +1044,8 @@ public class QuizController : ControllerBase
                     WHERE PassageID = @PassageId", conn, tx))
                 {
                     updatePassage.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = passageStatus });
-                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
-                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = teacherId.HasValue ? "Teacher" : DBNull.Value });
+                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                    updatePassage.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = "Teacher" });
                     updatePassage.Parameters.Add(new SqlParameter("@ModeratedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                     updatePassage.Parameters.Add(new SqlParameter("@RejectionReason", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.RejectionReason) ? DBNull.Value : (object)req.RejectionReason.Trim() });
                     updatePassage.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
@@ -923,8 +1065,8 @@ public class QuizController : ControllerBase
                     WHERE AudioID = @AudioId", conn, tx))
                 {
                     updateAudio.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = passageStatus });
-                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId.HasValue ? (object)teacherId.Value : DBNull.Value });
-                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = teacherId.HasValue ? "Teacher" : DBNull.Value });
+                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedBy", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                    updateAudio.Parameters.Add(new SqlParameter("@ModeratedByType", SqlDbType.NVarChar, 20) { Value = "Teacher" });
                     updateAudio.Parameters.Add(new SqlParameter("@ModeratedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
                     updateAudio.Parameters.Add(new SqlParameter("@RejectionReason", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.RejectionReason) ? DBNull.Value : (object)req.RejectionReason.Trim() });
                     updateAudio.Parameters.Add(new SqlParameter("@UpdatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
@@ -947,6 +1089,173 @@ public class QuizController : ControllerBase
         {
             return StatusCode(500, new { success = false, message = ex.Message });
         }
+    }
+
+    [HttpGet("review-questions/{quizId}")]
+    public IActionResult GetReviewQuestions(string quizId)
+    {
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to review questions." });
+        if (!Guid.TryParse(quizId, out var parsedQuizId)) return BadRequest(new { success = false, message = "A valid quiz id is required." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open();
+            const string sql = @"
+                SELECT q.QuestionID, q.QuestionTypeID, q.Content, q.Options, q.CorrectAnswer, q.Explanation,
+                       q.OrderIndex, q.Difficulty, q.CreatedBy, q.CreatedByType, q.ModerationStatus,
+                       q.ModeratedBy, q.ModeratedByType, qt.Code AS QuestionTypeCode,
+                       COALESCE(NULLIF(createdTeacher.FullName, ''), NULLIF(createdUser.FullName, '')) AS CreatorName,
+                       COALESCE(NULLIF(moderator.FullName, ''), NULLIF(moderatorUser.FullName, '')) AS ModeratorName,
+                       CAST(CASE WHEN quiz.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Material ownMaterial WHERE ownMaterial.QuizID = quiz.QuizID AND ownMaterial.TeacherID = @TeacherID) THEN 1 ELSE 0 END AS bit) AS CanManage
+                FROM Question q
+                JOIN Quiz quiz ON quiz.QuizID = q.QuizID
+                LEFT JOIN QuestionTypeCatalog qt ON qt.QuestionTypeID = q.QuestionTypeID
+                LEFT JOIN Teacher createdTeacher ON createdTeacher.TeacherID = q.CreatedBy
+                LEFT JOIN [User] createdUser ON createdUser.UserID = q.CreatedBy
+                LEFT JOIN Teacher moderator ON moderator.TeacherID = q.ModeratedBy
+                LEFT JOIN [User] moderatorUser ON moderatorUser.UserID = q.ModeratedBy
+                WHERE q.QuizID = @QuizID
+                ORDER BY q.OrderIndex, q.QuestionID";
+            using var cmd = new SqlCommand(sql, conn);
+            cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = parsedQuizId });
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read()) items.Add(new
+            {
+                questionId = reader.GetGuid(0).ToString(), questionTypeId = reader.GetInt32(1),
+                content = reader.GetString(2), options = reader.IsDBNull(3) ? null : reader.GetString(3),
+                correctAnswer = reader.IsDBNull(4) ? null : reader.GetString(4), explanation = reader.IsDBNull(5) ? null : reader.GetString(5),
+                orderIndex = reader.GetInt32(6), difficulty = reader.IsDBNull(7) ? null : reader.GetString(7),
+                createdBy = reader.IsDBNull(8) ? null : reader.GetGuid(8).ToString(), createdByType = reader.IsDBNull(9) ? null : reader.GetString(9),
+                moderationStatus = reader.IsDBNull(10) ? "Pending" : reader.GetString(10), moderatedBy = reader.IsDBNull(11) ? null : reader.GetGuid(11).ToString(),
+                moderatedByType = reader.IsDBNull(12) ? null : reader.GetString(12), questionTypeCode = reader.IsDBNull(13) ? null : reader.GetString(13),
+                creatorName = reader.IsDBNull(14) ? null : reader.GetString(14), moderatorName = reader.IsDBNull(15) ? null : reader.GetString(15), canManage = reader.GetBoolean(16)
+            });
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpPost("review-questions/{quizId}")]
+    public IActionResult AddReviewQuestion(string quizId, [FromBody] ReviewQuestionRequest? req)
+    {
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to add questions." });
+        if (!Guid.TryParse(quizId, out var parsedQuizId) || req == null || req.QuestionTypeID <= 0 || string.IsNullOrWhiteSpace(req.Content))
+            return BadRequest(new { success = false, message = "Quiz, question type, and question content are required." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open();
+            if (!TeacherOwnsQuiz(conn, parsedQuizId, teacherId.Value)) return Forbid();
+            var questionId = Guid.NewGuid();
+            using var cmd = new SqlCommand(@"
+                INSERT INTO Question (QuestionID, QuizID, Content, Options, CorrectAnswer, Explanation, OrderIndex,
+                    QuestionTypeID, QuestionType, Difficulty, CreatedBy, CreatedByType, ModerationStatus)
+                SELECT @QuestionID, @QuizID, @Content, @Options, @CorrectAnswer, @Explanation,
+                    CASE WHEN @OrderIndex > 0 THEN @OrderIndex ELSE ISNULL(MAX(OrderIndex), 0) + 1 END,
+                    @QuestionTypeID, qt.Code, @Difficulty, @TeacherID, 'Teacher', 'Pending'
+                FROM QuestionTypeCatalog qt
+                LEFT JOIN Question existing ON existing.QuizID = @QuizID
+                WHERE qt.QuestionTypeID = @QuestionTypeID
+                GROUP BY qt.Code", conn);
+            cmd.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = questionId });
+            cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = parsedQuizId });
+            cmd.Parameters.Add(new SqlParameter("@Content", SqlDbType.NVarChar, -1) { Value = req.Content.Trim() });
+            cmd.Parameters.Add(new SqlParameter("@Options", SqlDbType.NVarChar, -1) { Value = string.IsNullOrWhiteSpace(req.Options) ? DBNull.Value : req.Options });
+            cmd.Parameters.Add(new SqlParameter("@CorrectAnswer", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.CorrectAnswer) ? DBNull.Value : req.CorrectAnswer });
+            cmd.Parameters.Add(new SqlParameter("@Explanation", SqlDbType.NVarChar, -1) { Value = string.IsNullOrWhiteSpace(req.Explanation) ? DBNull.Value : req.Explanation });
+            cmd.Parameters.Add(new SqlParameter("@OrderIndex", SqlDbType.Int) { Value = req.OrderIndex });
+            cmd.Parameters.Add(new SqlParameter("@QuestionTypeID", SqlDbType.Int) { Value = req.QuestionTypeID });
+            cmd.Parameters.Add(new SqlParameter("@Difficulty", SqlDbType.NVarChar, 20) { Value = NormalizeQuestionDifficulty(req.Difficulty) });
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
+            if (cmd.ExecuteNonQuery() == 0) return BadRequest(new { success = false, message = "Question type not found or quiz unavailable." });
+            return Ok(new { success = true, questionId = questionId.ToString() });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpPut("review-question/{questionId}")]
+    public IActionResult UpdateReviewQuestion(string questionId, [FromBody] ReviewQuestionRequest? req)
+    {
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to edit questions." });
+        if (!Guid.TryParse(questionId, out var parsedQuestionId) || req == null || req.QuestionTypeID <= 0 || string.IsNullOrWhiteSpace(req.Content))
+            return BadRequest(new { success = false, message = "Question type and content are required." });
+        var moderationStatus = string.IsNullOrWhiteSpace(req.ModerationStatus) ? "Pending" : req.ModerationStatus.Trim();
+        if (moderationStatus is not ("Pending" or "Approved" or "Rejected")) return BadRequest(new { success = false, message = "Moderation status must be Pending, Approved, or Rejected." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open();
+            using var cmd = new SqlCommand(@"
+                UPDATE q SET q.Content = @Content, q.Options = @Options, q.CorrectAnswer = @CorrectAnswer,
+                    q.Explanation = @Explanation, q.QuestionTypeID = @QuestionTypeID, q.QuestionType = qt.Code,
+                    q.Difficulty = @Difficulty, q.OrderIndex = @OrderIndex, q.ModerationStatus = @ModerationStatus,
+                    q.ModeratedBy = @TeacherID, q.ModeratedByType = 'Teacher'
+                FROM Question q JOIN QuestionTypeCatalog qt ON qt.QuestionTypeID = @QuestionTypeID
+                WHERE q.QuestionID = @QuestionID AND EXISTS (SELECT 1 FROM Quiz ownerQuiz WHERE ownerQuiz.QuizID = q.QuizID AND
+                    (ownerQuiz.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Material ownerMaterial WHERE ownerMaterial.QuizID = ownerQuiz.QuizID AND ownerMaterial.TeacherID = @TeacherID)))", conn);
+            cmd.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = parsedQuestionId });
+            cmd.Parameters.Add(new SqlParameter("@Content", SqlDbType.NVarChar, -1) { Value = req.Content.Trim() });
+            cmd.Parameters.Add(new SqlParameter("@Options", SqlDbType.NVarChar, -1) { Value = string.IsNullOrWhiteSpace(req.Options) ? DBNull.Value : req.Options });
+            cmd.Parameters.Add(new SqlParameter("@CorrectAnswer", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(req.CorrectAnswer) ? DBNull.Value : req.CorrectAnswer });
+            cmd.Parameters.Add(new SqlParameter("@Explanation", SqlDbType.NVarChar, -1) { Value = string.IsNullOrWhiteSpace(req.Explanation) ? DBNull.Value : req.Explanation });
+            cmd.Parameters.Add(new SqlParameter("@QuestionTypeID", SqlDbType.Int) { Value = req.QuestionTypeID });
+            cmd.Parameters.Add(new SqlParameter("@Difficulty", SqlDbType.NVarChar, 20) { Value = NormalizeQuestionDifficulty(req.Difficulty) });
+            cmd.Parameters.Add(new SqlParameter("@OrderIndex", SqlDbType.Int) { Value = req.OrderIndex });
+            cmd.Parameters.Add(new SqlParameter("@ModerationStatus", SqlDbType.NVarChar, 20) { Value = moderationStatus });
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
+            if (cmd.ExecuteNonQuery() == 0) return NotFound(new { success = false, message = "Question not found." });
+            return Ok(new { success = true, moderationStatus, moderatedBy = teacherId.Value });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpDelete("review-question/{questionId}")]
+    public IActionResult DeleteReviewQuestion(string questionId)
+    {
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to delete questions." });
+        if (!Guid.TryParse(questionId, out var parsedQuestionId)) return BadRequest(new { success = false, message = "A valid question id is required." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open(); using var tx = conn.BeginTransaction();
+            using (var owner = new SqlCommand(@"SELECT q.QuizID FROM Question question JOIN Quiz q ON q.QuizID = question.QuizID
+                WHERE question.QuestionID = @QuestionID AND (q.CreatorID = @TeacherID OR EXISTS
+                (SELECT 1 FROM Material m WHERE m.QuizID = q.QuizID AND m.TeacherID = @TeacherID))", conn, tx))
+            {
+                owner.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = parsedQuestionId });
+                owner.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
+                if (owner.ExecuteScalar() == null) return Forbid();
+            }
+            using (var answers = new SqlCommand("DELETE FROM AnswerRecord WHERE QuestionID = @QuestionID", conn, tx))
+            { answers.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = parsedQuestionId }); answers.ExecuteNonQuery(); }
+            using var cmd = new SqlCommand("DELETE FROM Question WHERE QuestionID = @QuestionID", conn, tx);
+            cmd.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = parsedQuestionId });
+            if (cmd.ExecuteNonQuery() == 0) return NotFound(new { success = false, message = "Question not found." });
+            tx.Commit(); return Ok(new { success = true });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpPost("repair-missing-creators")]
+    public IActionResult RepairMissingCreators()
+    {
+        if (!GetCurrentTeacherId().HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to repair creator records." });
+        try
+        {
+            using var conn = GetConnection(); conn.Open(); using var tx = conn.BeginTransaction();
+            int quizzes, questions, passages, audios;
+            using (var cmd = new SqlCommand("UPDATE Quiz SET CreatorID = ApprovedBy WHERE CreatorID IS NULL AND ApprovedBy IS NOT NULL AND Status = 'Approved'; SELECT @@ROWCOUNT;", conn, tx)) quizzes = Convert.ToInt32(cmd.ExecuteScalar());
+            using (var cmd = new SqlCommand(@"UPDATE Question SET CreatedBy = ModeratedBy, CreatedByType = ModeratedByType
+                WHERE CreatedBy IS NULL AND ModeratedBy IS NOT NULL AND ModerationStatus = 'Approved'; SELECT @@ROWCOUNT;", conn, tx)) questions = Convert.ToInt32(cmd.ExecuteScalar());
+            using (var cmd = new SqlCommand(@"UPDATE ReadingPassage SET CreatedBy = ModeratedBy, CreatedByType = ModeratedByType
+                WHERE CreatedBy IS NULL AND ModeratedBy IS NOT NULL AND ModerationStatus = 'Approved'; SELECT @@ROWCOUNT;", conn, tx)) passages = Convert.ToInt32(cmd.ExecuteScalar());
+            using (var cmd = new SqlCommand(@"UPDATE ListeningAudio SET CreatedBy = ModeratedBy, CreatedByType = ModeratedByType
+                WHERE CreatedBy IS NULL AND ModeratedBy IS NOT NULL AND ModerationStatus = 'Approved'; SELECT @@ROWCOUNT;", conn, tx)) audios = Convert.ToInt32(cmd.ExecuteScalar());
+            tx.Commit(); return Ok(new { success = true, updated = new { quizzes, questions, passages, audios } });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
     }
 
     [HttpPost("knowledge")]
@@ -1018,6 +1327,8 @@ public class QuizController : ControllerBase
     [HttpPut("edit/{id}")]
     public IActionResult EditQuiz(string id, [FromBody] EditQuizRequest req)
     {
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue) return Unauthorized(new { success = false, message = "Sign in as a teacher to edit quizzes." });
         if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var quizId))
         {
             return BadRequest(new { success = false, message = "A valid quiz id is required." });
@@ -1035,11 +1346,13 @@ public class QuizController : ControllerBase
             using var tx = conn.BeginTransaction();
 
             // Check if quiz exists and get PassageID
-            string selectQuiz = "SELECT PassageID FROM Quiz WHERE QuizID = @QuizId";
+            string selectQuiz = @"SELECT PassageID FROM Quiz WHERE QuizID = @QuizId AND
+                (CreatorID = @TeacherId OR EXISTS (SELECT 1 FROM Material WHERE QuizID = @QuizId AND TeacherID = @TeacherId))";
             object? passageIdObj;
             using (var cmd = new SqlCommand(selectQuiz, conn, tx))
             {
                 cmd.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.Parameters.Add(new SqlParameter("@TeacherId", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
                 passageIdObj = cmd.ExecuteScalar();
             }
 
