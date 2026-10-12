@@ -178,3 +178,67 @@ _______________________________________
 - Đổi AI review thành Quiz Review, bổ sung lọc quiz theo người tạo và thao tác moderation/quản lý dựa trên schema SQL mới.
 - Giữ giới hạn sửa/xóa nội dung quiz ở teacher sở hữu quiz sau khi auto-review từ chối mở rộng quyền xóa quiz của người khác.
 _______________________________________
+
+[Id 10]:
+[Model_name]: Codex
+[Time]: 2026-10-12 09:29
+[Title]: Fix teacher AI review authorization
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/ClientApp/src/features/teacher/dashboard/TeacherDashboardPage.jsx
+[Description]
+- Đọc mustRead.md và log đăng nhập/moderation do người dùng cung cấp.
+- Sửa xác thực moderation để chấp nhận session teacher có UserType Instructor, đồng thời dashboard gửi access token khi tải hàng đợi.
+- Chưa chạy build hoặc test.
+_______________________________________
+
+[Id 11]:
+[Model_name]: Codex
+[Time]: 2026-10-12 09:33
+[Title]: Rebuild AI review authorization changes
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/features/teacher/dashboard/TeacherDashboardPage.jsx
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-DjbRKwCu.css
+- auth-portal/wwwroot/assets/index-DucOJjXV.js
+- sessionHistory.md
+[Description]
+- Tái build bundle Vite trong wwwroot vì localhost:5000 phục vụ static bundle đã build.
+- Build .NET thành công bằng --no-restore; bundle frontend build thành công.
+- Sau khi API restart, token cũ trong localStorage không còn hiệu lực vì session backend được lưu trong RAM; cần đăng nhập lại.
+_______________________________________
+
+[Id 12]:
+[Model_name]: Codex
+[Time]: 2026-10-12 09:38
+[Title]: Fix teacher AI review 401
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/shared/api/http.js
+- auth-portal/ClientApp/src/shared/auth/AuthContext.jsx
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-D3jFEP7E.js
+[Description]
+- Investigate and fix the 401 response on /teacher/ai-review, then validate the relevant frontend/backend behavior.
+- Handle authenticated 401 responses by clearing stale client auth and redirecting protected teacher pages to login.
+- Fix missing closing parenthesis in the moderation queue SQL WHERE clause that caused syntax error near ORDER BY.
+- Build frontend and backend, verify teacher login redirect in browser, and pass 12 existing AuthPortal tests.
+_______________________________________
+
+[Id 13]:
+[Model_name]: Codex
+[Time]: 2026-10-12 09:56
+[Title]: Diagnose AI review server error
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+[Description]
+- Investigate the recurring 500 response from the teacher moderation queue using server logs and a direct SQL reproduction, then fix and validate the underlying issue.
+- Fixed the moderation queue 500: dispose the queue SqlDataReader before running the creator query on the same MARS-disabled connection.
+- Built the backend and confirmed both SQL queries execute sequentially against the configured database; unauthenticated API requests still correctly return 401.
+- Full AuthPortal test run: 10 passed and 2 existing QuizReview tests failed with a null HttpContext in test setup, outside the changed queue action.
+_______________________________________

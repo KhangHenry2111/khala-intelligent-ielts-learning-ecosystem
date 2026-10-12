@@ -1,4 +1,4 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
 const AuthContext = createContext(null);
 const storageKey = 'ielts.auth.user';
@@ -11,6 +11,15 @@ export function AuthProvider({ children }) {
       return null;
     }
   });
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setUser(null);
+      localStorage.removeItem(storageKey);
+    };
+    window.addEventListener('auth:unauthorized', handleUnauthorized);
+    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+  }, []);
 
   const signIn = (nextUser) => {
     setUser(nextUser);

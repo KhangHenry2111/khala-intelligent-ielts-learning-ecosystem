@@ -36,7 +36,12 @@ public class QuizController : ControllerBase
         var token = Request.Headers.Authorization.ToString();
         if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
         var session = AuthService?.GetSession(token);
-        return session != null && string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
+        // AuthService currently labels teacher login sessions as "Instructor".
+        // Accept both values so existing sessions and teacher registrations can
+        // access moderation endpoints consistently.
+        return session != null
+            && (string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(session.UserType, "Instructor", StringComparison.OrdinalIgnoreCase))
             && Guid.TryParse(session.Id, out var teacherId) ? teacherId : null;
     }
 
@@ -892,40 +897,42 @@ public class QuizController : ControllerBase
                 WHERE (@Scope = 'all'
                     OR (@Scope = 'mine' AND (q.CreatorID = @TeacherID OR EXISTS (SELECT 1 FROM Question ownQuestion WHERE ownQuestion.QuizID = q.QuizID AND ownQuestion.CreatedBy = @TeacherID)))
                     OR (@Scope = 'unassigned' AND (q.CreatorID IS NULL OR EXISTS (SELECT 1 FROM Question unassignedQuestion WHERE unassignedQuestion.QuizID = q.QuizID AND unassignedQuestion.CreatedBy IS NULL)))
-                    OR (@Scope = 'creator' AND (q.CreatorID = @CreatorID OR EXISTS (SELECT 1 FROM Question selectedQuestion WHERE selectedQuestion.QuizID = q.QuizID AND selectedQuestion.CreatedBy = @CreatorID)))
+                    OR (@Scope = 'creator' AND (q.CreatorID = @CreatorID OR EXISTS (SELECT 1 FROM Question selectedQuestion WHERE selectedQuestion.QuizID = q.QuizID AND selectedQuestion.CreatedBy = @CreatorID))))
                 ORDER BY q.CreatedAt DESC";
 
             using var cmd = new SqlCommand(sql, conn);
             cmd.Parameters.Add(new SqlParameter("@Scope", SqlDbType.NVarChar, 20) { Value = scope });
             cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = currentTeacherId.Value });
             cmd.Parameters.Add(new SqlParameter("@CreatorID", SqlDbType.UniqueIdentifier) { Value = Guid.TryParse(creatorId, out var selectedCreator) ? (object)selectedCreator : DBNull.Value });
-            using var reader = cmd.ExecuteReader();
-            while (reader.Read())
+            using (var reader = cmd.ExecuteReader())
             {
-                queue.Add(new QuizModerationItem
+                while (reader.Read())
                 {
-                    QuizId = reader.GetGuid(reader.GetOrdinal("QuizID")).ToString(),
-                    Title = reader.IsDBNull(reader.GetOrdinal("Title")) ? "AI Generated Quiz" : reader.GetString(reader.GetOrdinal("Title")),
-                    Skill = reader.IsDBNull(reader.GetOrdinal("Skill")) ? "Reading" : reader.GetString(reader.GetOrdinal("Skill")),
-                    Level = reader.IsDBNull(reader.GetOrdinal("Level")) ? "Intermediate" : reader.GetString(reader.GetOrdinal("Level")),
-                    Source = reader.IsDBNull(reader.GetOrdinal("Source")) ? "AI" : reader.GetString(reader.GetOrdinal("Source")),
-                    Status = reader.IsDBNull(reader.GetOrdinal("Status")) ? "PendingReview" : reader.GetString(reader.GetOrdinal("Status")),
-                    PassageId = reader.IsDBNull(reader.GetOrdinal("PassageID")) ? null : reader.GetGuid(reader.GetOrdinal("PassageID")).ToString(),
-                    PassageTitle = reader.IsDBNull(reader.GetOrdinal("PassageTitle")) ? null : reader.GetString(reader.GetOrdinal("PassageTitle")),
-                    Topic = reader.IsDBNull(reader.GetOrdinal("Topic")) ? null : reader.GetString(reader.GetOrdinal("Topic")),
-                    WordCount = reader.IsDBNull(reader.GetOrdinal("WordCount")) ? null : reader.GetInt32(reader.GetOrdinal("WordCount")),
-                    PassageContent = reader.IsDBNull(reader.GetOrdinal("PassageContent")) ? null : reader.GetString(reader.GetOrdinal("PassageContent")),
-                    AudioURL = reader.IsDBNull(reader.GetOrdinal("AudioURL")) ? null : reader.GetString(reader.GetOrdinal("AudioURL")),
-                    Transcript = reader.IsDBNull(reader.GetOrdinal("Transcript")) ? null : reader.GetString(reader.GetOrdinal("Transcript")),
-                    QuestionCount = reader.IsDBNull(reader.GetOrdinal("QuestionCount")) ? 0 : reader.GetInt32(reader.GetOrdinal("QuestionCount")),
-                    ModerationStatus = reader.IsDBNull(reader.GetOrdinal("ModerationStatus")) ? null : reader.GetString(reader.GetOrdinal("ModerationStatus")),
-                    CreatorId = reader.IsDBNull(reader.GetOrdinal("CreatorID")) ? null : reader.GetGuid(reader.GetOrdinal("CreatorID")).ToString(),
-                    CreatorName = reader.IsDBNull(reader.GetOrdinal("CreatorName")) ? null : reader.GetString(reader.GetOrdinal("CreatorName")),
-                    ApprovedBy = reader.IsDBNull(reader.GetOrdinal("ApprovedBy")) ? null : reader.GetGuid(reader.GetOrdinal("ApprovedBy")).ToString(),
-                    ApproverName = reader.IsDBNull(reader.GetOrdinal("ApproverName")) ? null : reader.GetString(reader.GetOrdinal("ApproverName")),
-                    CanManage = reader.GetBoolean(reader.GetOrdinal("CanManage")),
-                    CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
-                });
+                    queue.Add(new QuizModerationItem
+                    {
+                        QuizId = reader.GetGuid(reader.GetOrdinal("QuizID")).ToString(),
+                        Title = reader.IsDBNull(reader.GetOrdinal("Title")) ? "AI Generated Quiz" : reader.GetString(reader.GetOrdinal("Title")),
+                        Skill = reader.IsDBNull(reader.GetOrdinal("Skill")) ? "Reading" : reader.GetString(reader.GetOrdinal("Skill")),
+                        Level = reader.IsDBNull(reader.GetOrdinal("Level")) ? "Intermediate" : reader.GetString(reader.GetOrdinal("Level")),
+                        Source = reader.IsDBNull(reader.GetOrdinal("Source")) ? "AI" : reader.GetString(reader.GetOrdinal("Source")),
+                        Status = reader.IsDBNull(reader.GetOrdinal("Status")) ? "PendingReview" : reader.GetString(reader.GetOrdinal("Status")),
+                        PassageId = reader.IsDBNull(reader.GetOrdinal("PassageID")) ? null : reader.GetGuid(reader.GetOrdinal("PassageID")).ToString(),
+                        PassageTitle = reader.IsDBNull(reader.GetOrdinal("PassageTitle")) ? null : reader.GetString(reader.GetOrdinal("PassageTitle")),
+                        Topic = reader.IsDBNull(reader.GetOrdinal("Topic")) ? null : reader.GetString(reader.GetOrdinal("Topic")),
+                        WordCount = reader.IsDBNull(reader.GetOrdinal("WordCount")) ? null : reader.GetInt32(reader.GetOrdinal("WordCount")),
+                        PassageContent = reader.IsDBNull(reader.GetOrdinal("PassageContent")) ? null : reader.GetString(reader.GetOrdinal("PassageContent")),
+                        AudioURL = reader.IsDBNull(reader.GetOrdinal("AudioURL")) ? null : reader.GetString(reader.GetOrdinal("AudioURL")),
+                        Transcript = reader.IsDBNull(reader.GetOrdinal("Transcript")) ? null : reader.GetString(reader.GetOrdinal("Transcript")),
+                        QuestionCount = reader.IsDBNull(reader.GetOrdinal("QuestionCount")) ? 0 : reader.GetInt32(reader.GetOrdinal("QuestionCount")),
+                        ModerationStatus = reader.IsDBNull(reader.GetOrdinal("ModerationStatus")) ? null : reader.GetString(reader.GetOrdinal("ModerationStatus")),
+                        CreatorId = reader.IsDBNull(reader.GetOrdinal("CreatorID")) ? null : reader.GetGuid(reader.GetOrdinal("CreatorID")).ToString(),
+                        CreatorName = reader.IsDBNull(reader.GetOrdinal("CreatorName")) ? null : reader.GetString(reader.GetOrdinal("CreatorName")),
+                        ApprovedBy = reader.IsDBNull(reader.GetOrdinal("ApprovedBy")) ? null : reader.GetGuid(reader.GetOrdinal("ApprovedBy")).ToString(),
+                        ApproverName = reader.IsDBNull(reader.GetOrdinal("ApproverName")) ? null : reader.GetString(reader.GetOrdinal("ApproverName")),
+                        CanManage = reader.GetBoolean(reader.GetOrdinal("CanManage")),
+                        CreatedAt = reader.GetDateTime(reader.GetOrdinal("CreatedAt"))
+                    });
+                }
             }
             var creators = new List<object>();
             using (var creatorsCmd = new SqlCommand(@"

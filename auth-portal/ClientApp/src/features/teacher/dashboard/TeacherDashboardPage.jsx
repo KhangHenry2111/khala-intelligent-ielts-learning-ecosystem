@@ -14,7 +14,7 @@ export function TeacherDashboardPage() {
 
   useEffect(() => {
     let active = true;
-    quizApi.moderationQueue()
+    quizApi.moderationQueue({}, user?.accessToken)
       .then((payload) => {
         if (active) setPendingReviewCount((payload.items || []).length);
       })
@@ -22,7 +22,7 @@ export function TeacherDashboardPage() {
         if (active) setPendingReviewCount(0);
       });
     return () => { active = false; };
-  }, []);
+  }, [user?.accessToken]);
 
   const stats = [
     { label: 'Classes', value: '08', tone: 'default' },
