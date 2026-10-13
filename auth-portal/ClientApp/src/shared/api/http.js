@@ -1,6 +1,11 @@
 export async function request(path, options) {
   const response = await fetch(path, options);
-  const data = await response.json().catch(() => ({}));
+  let data = {};
+  try {
+    data = await response.json();
+  } catch {
+    if (response.ok) throw new Error('The server returned an invalid response.');
+  }
   if (!response.ok) {
     if (response.status === 401 && new Headers(options?.headers).has('Authorization')) {
       window.dispatchEvent(new Event('auth:unauthorized'));

@@ -178,15 +178,13 @@ public class QuizController : ControllerBase
             var isTeacherQuiz = string.Equals(req.Source, "Teacher", StringComparison.OrdinalIgnoreCase);
             if (isTeacherQuiz)
             {
-                var token = Request.Headers.Authorization.ToString();
-                if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
-                var sessionUser = AuthService?.GetSession(token);
-                if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase))
+                var sessionTeacherId = GetCurrentTeacherId();
+                if (!sessionTeacherId.HasValue)
                 {
                     return Unauthorized(new SaveQuizResponse { Success = false, Message = "Sign in as a teacher before creating a quiz." });
                 }
 
-                if (!Guid.TryParse(req.CreatorId, out var teacherId) || !Guid.TryParse(sessionUser.Id, out var sessionTeacherId) || teacherId != sessionTeacherId)
+                if (!Guid.TryParse(req.CreatorId, out var teacherId) || teacherId != sessionTeacherId.Value)
                 {
                     return Forbid();
                 }
@@ -518,11 +516,8 @@ public class QuizController : ControllerBase
     [HttpGet("teacher-lessons")]
     public IActionResult GetTeacherLessons()
     {
-        var token = Request.Headers.Authorization.ToString();
-        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
-        var sessionUser = AuthService?.GetSession(token);
-        if (sessionUser == null || !string.Equals(sessionUser.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)
-            || !Guid.TryParse(sessionUser.Id, out var teacherId))
+        var teacherId = GetCurrentTeacherId();
+        if (!teacherId.HasValue)
         {
             return Unauthorized(new { success = false, message = "Sign in as a teacher to view uploaded lessons." });
         }
@@ -541,7 +536,7 @@ public class QuizController : ControllerBase
                 GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price, m.Status, m.CreatedAt, m.QuizID
                 ORDER BY m.CreatedAt DESC";
             using var cmd = new SqlCommand(sql, conn);
-            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+            cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId.Value });
             using var reader = cmd.ExecuteReader();
             var items = new List<object>();
             while (reader.Read())
@@ -792,15 +787,15 @@ public class QuizController : ControllerBase
     public IActionResult UpdateMaterialStatus(string id, [FromBody] MaterialStatusRequest? req)
     {
         var session = GetCurrentSession();
-        if (session == null || (!string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)))
+        var isAdmin = string.Equals(session?.UserType, "Admin", StringComparison.OrdinalIgnoreCase);
+        var teacherId = isAdmin ? null : GetCurrentTeacherId();
+        if (session == null || (!isAdmin && !teacherId.HasValue))
             return Unauthorized(new { success = false, message = "Sign in to manage content." });
         if (!Guid.TryParse(id, out var materialId) || req?.Status is not ("Pending" or "Approved" or "Rejected"))
             return BadRequest(new { success = false, message = "A valid material id and status (Pending, Approved, Rejected) are required." });
         try
         {
             using var conn = GetConnection(); conn.Open();
-            var isAdmin = string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase);
             using var cmd = new SqlCommand(isAdmin
                 ? "UPDATE Material SET Status = @Status WHERE MaterialID = @Id"
                 : "UPDATE Material SET Status = @Status WHERE MaterialID = @Id AND TeacherID = @TeacherID", conn);
@@ -808,8 +803,7 @@ public class QuizController : ControllerBase
             cmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = materialId });
             if (!isAdmin)
             {
-                if (!Guid.TryParse(session.Id, out var teacherId)) return Forbid();
-                cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId!.Value });
             }
             if (cmd.ExecuteNonQuery() == 0) return NotFound(new { success = false, message = "Material not found." });
             return Ok(new { success = true, status = req.Status });
@@ -1418,8 +1412,9 @@ public class QuizController : ControllerBase
     public IActionResult DeleteQuiz(string id)
     {
         var session = GetCurrentSession();
-        if (session == null || (!string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase)))
+        var isAdmin = string.Equals(session?.UserType, "Admin", StringComparison.OrdinalIgnoreCase);
+        var teacherId = isAdmin ? null : GetCurrentTeacherId();
+        if (session == null || (!isAdmin && !teacherId.HasValue))
             return Unauthorized(new { success = false, message = "Sign in to delete a lesson." });
         if (string.IsNullOrWhiteSpace(id) || !Guid.TryParse(id, out var quizId))
         {
@@ -1445,12 +1440,11 @@ public class QuizController : ControllerBase
                 audioId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
             }
 
-            if (string.Equals(session.UserType, "Teacher", StringComparison.OrdinalIgnoreCase))
+            if (!isAdmin)
             {
-                if (!Guid.TryParse(session.Id, out var teacherId)) return Forbid();
                 using var ownerCheck = new SqlCommand("SELECT COUNT(1) FROM Material WHERE QuizID = @QuizId AND TeacherID = @TeacherID", conn, tx);
                 ownerCheck.Parameters.Add(new SqlParameter("@QuizId", SqlDbType.UniqueIdentifier) { Value = quizId });
-                ownerCheck.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId });
+                ownerCheck.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId!.Value });
                 if (Convert.ToInt32(ownerCheck.ExecuteScalar()) == 0) return Forbid();
             }
 

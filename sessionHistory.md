@@ -242,3 +242,42 @@ _______________________________________
 - Built the backend and confirmed both SQL queries execute sequentially against the configured database; unauthenticated API requests still correctly return 401.
 - Full AuthPortal test run: 10 passed and 2 existing QuizReview tests failed with a null HttpContext in test setup, outside the changed queue action.
 _______________________________________
+
+[Id 14]:
+[Model_name]: Codex
+[Time]: 2026-10-13 10:08
+[Title]: Fix lesson navigation redirecting teacher to login
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+[Description]
+- Investigate latest teacher lesson UI login redirect using block 13 context; fix and verify relevant authentication/navigation behavior.
+- Root cause: AuthService issues teacher sessions as Instructor, while lesson endpoints accepted only Teacher; latest client change cleared auth on any authenticated 401.
+- Reused GetCurrentTeacherId for lesson listing, teacher quiz creation, lesson status updates, and quiz deletion while retaining ownership/admin checks.
+- Backend build succeeded with 0 warnings and 0 errors using an alternate output folder because the live AuthPortal process locked the default output.
+_______________________________________
+
+[Id 15]:
+[Model_name]: Codex
+[Time]: 2026-10-13 10:21
+[Title]: Add admin account editing and deletion
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/features/admin/accounts/AccountsPage.jsx
+- auth-portal/ClientApp/src/shared/api/adminAccountsApi.js
+- auth-portal/ClientApp/src/shared/api/http.js
+- auth-portal/ClientApp/src/shared/api/index.js
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/Controllers/AdminAccountsController.cs
+- auth-portal/Models/AdminAccountUpdateRequest.cs
+- auth-portal/Services/AuthService.cs
+- auth-portal/Services/IAuthService.cs
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-CvUOuGRB.js
+- auth-portal/wwwroot/assets/index-D2ojfJ5Y.css
+[Description]
+- Implement admin account management editing for all user and teacher profile fields and safe account deletion in the UI and backend after inspecting existing schema and API patterns.
+- Replaced mock admin account rows with API-backed user/teacher management, search/type filters, edit form for profile fields, and optional password reset; system identifiers and usage metrics are read-only.
+- Added admin-only backend list, update, and soft-delete endpoints with parameterized SQL, field validation, package selection, PBKDF2 password hashing, preserved learning history, and revocation of existing sessions when deactivated or reset.
+- Rebuilt frontend and backend successfully. Restarted the local AuthPortal process; verified the new accounts API returns JSON 401 when called without an admin session.
+_______________________________________

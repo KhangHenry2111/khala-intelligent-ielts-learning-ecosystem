@@ -74,6 +74,21 @@ public class AuthService : IAuthService
     public UserInfo? GetSession(string token) =>
         !string.IsNullOrWhiteSpace(token) && _sessions.TryGetValue(token, out var user) ? user : null;
 
+    public int RevokeSessions(string userId, string userType)
+    {
+        var revoked = 0;
+        foreach (var session in _sessions)
+        {
+            var typeMatches = string.Equals(session.Value.UserType, userType, StringComparison.OrdinalIgnoreCase)
+                || (string.Equals(userType, "Teacher", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(session.Value.UserType, "Instructor", StringComparison.OrdinalIgnoreCase));
+            if (typeMatches && string.Equals(session.Value.Id, userId, StringComparison.OrdinalIgnoreCase)
+                && _sessions.TryRemove(session.Key, out _))
+                revoked++;
+        }
+        return revoked;
+    }
+
     public UserInfo? Authenticate(string username, string password, string userType)
     {
         userType = (userType ?? string.Empty).Trim();
