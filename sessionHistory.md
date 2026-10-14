@@ -281,3 +281,25 @@ _______________________________________
 - Added admin-only backend list, update, and soft-delete endpoints with parameterized SQL, field validation, package selection, PBKDF2 password hashing, preserved learning history, and revocation of existing sessions when deactivated or reset.
 - Rebuilt frontend and backend successfully. Restarted the local AuthPortal process; verified the new accounts API returns JSON 401 when called without an admin session.
 _______________________________________
+
+[Id 16]:
+[Model_name]: Codex
+[Time]: 2026-10-14 15:02
+[Title]: Add learner class browsing and lesson registration
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/LearningController.cs
+- auth-portal/ClientApp/src/features/user/classes/ClassesPage.jsx
+- auth-portal/ClientApp/src/app/AppRouter.jsx
+- auth-portal/ClientApp/src/features/user/navigation.js
+- auth-portal/ClientApp/src/shared/api/learningApi.js
+- auth-portal/ClientApp/src/shared/api/index.js
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-9-s0X5Lg.css
+- auth-portal/wwwroot/assets/index-D0SUyWft.js
+[Description]
+- Implement a learner-facing teacher directory, teacher profile and class/lesson enrollment flow.
+- Thêm danh sách giáo viên, trang hồ sơ kèm các lesson được duyệt và đăng ký lesson miễn phí qua MaterialAccess; lesson trả phí yêu cầu thanh toán.
+- Build Vite và dotnet build với StaticWebAssetsEnabled=false thành công. Build mặc định bị tiến trình chạy hiện tại khóa DLL và tham chiếu manifest static assets cũ.
+_______________________________________

@@ -6,6 +6,7 @@ import { AuthPage } from '../features/auth/AuthPage';
 import { ProfilePage } from '../features/profile/ProfilePage';
 import { PlansPage } from '../features/user/plans/PlansPage';
 import { AvailableQuizPage } from '../features/user/available-quiz/AvailableQuizPage';
+import { ClassesPage as UserClassesPage } from '../features/user/classes/ClassesPage';
 import { AiQuizPage } from '../features/user/ai-quiz/AiQuizPage';
 import { LevelTestPage } from '../features/user/level-test/LevelTestPage';
 import { UploadDocumentPage } from '../features/user/upload/UploadDocumentPage';
@@ -53,6 +54,7 @@ function DashboardSwitch() {
 }
 
 const userFeaturePages = {
+  classes: UserClassesPage,
   'available-quiz': AvailableQuizPage,
   'ai-quiz': AiQuizPage,
   'level-test': LevelTestPage,

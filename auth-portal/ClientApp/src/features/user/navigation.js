@@ -1,4 +1,5 @@
 export const userNavItems = [
+  { name: 'Classes', path: '/user/classes', showRank: false },
   { name: 'Available quizzes', path: '/user/available-quiz', showRank: true },
   { name: 'AI quiz generator', path: '/user/ai-quiz', showRank: true },
   { name: 'Level test', path: '/user/level-test', showRank: true },
