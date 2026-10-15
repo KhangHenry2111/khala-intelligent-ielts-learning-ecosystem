@@ -543,7 +543,7 @@ public class QuizController : ControllerBase
             {
                 items.Add(new
                 {
-                    materialId = reader.GetGuid(0).ToString(),
+                    materialId = reader.GetGuid(9).ToString(),
                     title = reader.GetString(1),
                     description = reader.IsDBNull(2) ? null : reader.GetString(2),
                     skill = reader.IsDBNull(3) ? null : reader.GetString(3),
@@ -552,7 +552,7 @@ public class QuizController : ControllerBase
                     price = reader.GetDecimal(6),
                     status = reader.GetString(7),
                     createdAt = reader.GetDateTime(8),
-                    quizId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
+                    quizId = reader.GetGuid(0).ToString(),
                     questionCount = reader.GetInt32(10)
                 });
             }
@@ -572,15 +572,27 @@ public class QuizController : ControllerBase
             using var conn = GetConnection();
             conn.Open();
             const string sql = @"
-                SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree, m.Price,
-                       m.CreatedAt, t.FullName, m.QuizID, COUNT(q.QuestionID) AS QuestionCount
-                FROM Material m
-                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
-                LEFT JOIN Question q ON q.QuizID = m.QuizID
-                WHERE m.Status = 'Approved' AND m.QuizID IS NOT NULL
-                GROUP BY m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree,
-                         m.Price, m.CreatedAt, t.FullName, m.QuizID
-                ORDER BY m.CreatedAt DESC";
+                SELECT quiz.QuizID, quiz.Title, material.Description, quiz.Skill, quiz.Level,
+                       ISNULL(material.IsFree, 1) AS IsFree, ISNULL(material.Price, 0) AS Price,
+                       quiz.CreatedAt,
+                       COALESCE(NULLIF(quizTeacher.FullName, ''), NULLIF(quizUser.FullName, ''), materialTeacher.FullName) AS TeacherName,
+                       ISNULL(material.MaterialID, quiz.QuizID) AS MaterialID,
+                       (SELECT COUNT(*) FROM Question question WHERE question.QuizID = quiz.QuizID) AS QuestionCount
+                FROM Quiz quiz
+                OUTER APPLY (
+                    SELECT TOP 1 m.MaterialID, m.Description, m.IsFree, m.Price, m.TeacherID
+                    FROM Material m
+                    WHERE m.QuizID = quiz.QuizID
+                    ORDER BY CASE WHEN m.Status = 'Approved' THEN 0 ELSE 1 END, m.CreatedAt DESC
+                ) material
+                LEFT JOIN Teacher quizTeacher ON quizTeacher.TeacherID = quiz.CreatorID
+                LEFT JOIN [User] quizUser ON quizUser.UserID = quiz.CreatorID
+                LEFT JOIN Teacher materialTeacher ON materialTeacher.TeacherID = material.TeacherID
+                WHERE quiz.Status = 'Approved' OR EXISTS (
+                    SELECT 1 FROM Material approvedMaterial
+                    WHERE approvedMaterial.QuizID = quiz.QuizID AND approvedMaterial.Status = 'Approved'
+                )
+                ORDER BY quiz.CreatedAt DESC";
             using var cmd = new SqlCommand(sql, conn);
             using var reader = cmd.ExecuteReader();
             var items = new List<object>();

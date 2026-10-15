@@ -7,6 +7,7 @@ export function AvailableQuizPage() {
   const [lessons, setLessons] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let active = true;
@@ -15,14 +16,19 @@ export function AvailableQuizPage() {
       .catch((cause) => { if (active) setError(cause.message || 'Could not load lessons.'); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [refreshKey]);
 
   return (
     <div className="dashboard-container">
       <section className="glass-card available-lessons-card">
         <div className="available-lessons-heading">
           <div><span className="content-detail-eyebrow">LEARNER LIBRARY</span><h1>Available lessons</h1><p>Browse teacher approved IELTS lessons and their question sets.</p></div>
-          <span className="available-lessons-total">{lessons.length} lessons</span>
+          <div className="available-lessons-actions">
+            <span className="available-lessons-total">{loading ? 'Loading…' : `${lessons.length} lessons`}</span>
+            <button type="button" className="available-lessons-refresh" onClick={() => { setLoading(true); setError(''); setRefreshKey((key) => key + 1); }} disabled={loading}>
+              {loading ? 'Refreshing…' : 'Refresh'}
+            </button>
+          </div>
         </div>
         {error && <p className="teacher-quiz-notice error" role="alert">{error}</p>}
         {loading ? <p className="content-list-state" role="status">Loading lessons…</p> : !error && lessons.length === 0 ? (

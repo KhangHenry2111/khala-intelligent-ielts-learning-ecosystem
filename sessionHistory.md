@@ -303,3 +303,34 @@ _______________________________________
 - Thêm danh sách giáo viên, trang hồ sơ kèm các lesson được duyệt và đăng ký lesson miễn phí qua MaterialAccess; lesson trả phí yêu cầu thanh toán.
 - Build Vite và dotnet build với StaticWebAssetsEnabled=false thành công. Build mặc định bị tiến trình chạy hiện tại khóa DLL và tham chiếu manifest static assets cũ.
 _______________________________________
+
+[Id 17]:
+[Model_name]: Codex
+[Time]: 2026-10-15 16:25
+[Title]: Show approved lessons in learner quiz library
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/ClientApp/src/features/user/available-quiz/AvailableQuizPage.jsx
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-D7YBPSSC.css
+- auth-portal/wwwroot/assets/index-DDmU3pCH.js
+[Description]
+- Trace why approved lessons are missing from the learner available quiz page.
+- Update available lesson filtering to include lessons whose quiz or material has Approved status; add learner refresh and responsive loading count controls.
+- Build frontend and backend successfully. Backend build used a separate output directory because the running portal locks its executable; restart the portal to load the updated API endpoint.
+_______________________________________
+
+[Id 18]:
+[Model_name]: Codex
+[Time]: 2026-10-15 16:38
+[Title]: Show approved AI review quizzes in learner library
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+[Description]
+- Trace approved quiz flow from teacher AI review to the learner available quiz page and include approved quizzes in the learner-facing list.
+- Confirmed teacher AI Review writes Quiz.Status = Approved and only updates Material rows when one already exists; the learner endpoint was rooted on Material, so approved AI quizzes without Material records could not appear.
+- Changed the available lessons endpoint to query approved Quiz records directly and left-join their Material details. It now includes approved quizzes without Materials; frontend cards receive QuizID as their stable item ID. Frontend and backend builds succeeded. The currently running localhost:5000 endpoint still returns zero items because its process has not reloaded the updated backend.
+_______________________________________

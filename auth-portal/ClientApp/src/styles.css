@@ -1566,6 +1566,10 @@ body {
 .available-lessons-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
 .available-lessons-heading h1 { margin-top: 6px; font: 700 1.65rem var(--font-heading); }
 .available-lessons-heading p { margin-top: 6px; color: var(--text-secondary); }
+.available-lessons-actions { display: flex; align-items: center; gap: 10px; }
+.available-lessons-refresh { min-height: 38px; padding: 8px 13px; border: 1px solid rgba(129, 140, 248, .25); border-radius: 10px; background: rgba(99, 102, 241, .12); color: #c7d2fe; font: 700 .82rem var(--font-body); cursor: pointer; transition: background .18s ease, border-color .18s ease; }
+.available-lessons-refresh:hover:not(:disabled) { border-color: rgba(129, 140, 248, .55); background: rgba(99, 102, 241, .2); }
+.available-lessons-refresh:disabled { cursor: wait; opacity: .65; }
 .available-lessons-total { padding: 8px 12px; border: 1px solid rgba(129, 140, 248, .2); border-radius: 999px; background: rgba(99, 102, 241, .1); color: #c7d2fe; font-size: .82rem; font-weight: 700; white-space: nowrap; }
 .available-lessons-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 15px; }
 .available-lesson-tile { display: flex; min-width: 0; flex-direction: column; gap: 13px; padding: 18px; border: 1px solid rgba(255, 255, 255, .08); border-radius: 15px; background: linear-gradient(145deg, rgba(30, 41, 59, .72), rgba(15, 23, 42, .62)); transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease; }
@@ -1607,6 +1611,7 @@ body {
 .learner-enroll-button { padding: 9px 12px; border: 0; border-radius: 9px; color: #fff; cursor: pointer; font: 700 .78rem var(--font-body); }
 .learner-enroll-button:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 650px) { .teacher-profile-panel { align-items: flex-start; flex-wrap: wrap; padding: 16px; } .teacher-profile-stat { display: flex; gap: 7px; } .teacher-directory-card { gap: 11px; padding: 12px; } .teacher-directory-card > img, .teacher-directory-card > .teacher-profile-avatar { width: 46px; height: 46px; flex-basis: 46px; } }
+@media (max-width: 560px) { .available-lessons-heading { align-items: flex-start; flex-direction: column; } .available-lessons-actions { width: 100%; justify-content: space-between; } }
 .quiz-review-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 16px 0 20px; padding: 13px; border: 1px solid rgba(255, 255, 255, .07); border-radius: 12px; background: rgba(15, 23, 42, .42); }
 .quiz-review-toolbar label { color: var(--text-secondary); font-size: .85rem; font-weight: 700; }
 .quiz-review-toolbar select, .review-question-edit-grid select, .review-question-add select { min-height: 38px; padding: 7px 10px; border: 1px solid rgba(255, 255, 255, .12); border-radius: 8px; background: #172033; color: var(--text-primary); font: inherit; font-size: .84rem; }
