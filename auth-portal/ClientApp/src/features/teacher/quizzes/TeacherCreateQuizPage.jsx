@@ -63,6 +63,18 @@ export function TeacherCreateQuizPage() {
       : question));
   };
 
+  const addQuestion = () => {
+    if (questions.length >= 40) return;
+    setQuestions((current) => [...current, blankQuestion()]);
+    setCount((current) => Math.min(40, current + 1));
+  };
+
+  const removeQuestion = (index) => {
+    if (questions.length <= 1) return;
+    setQuestions((current) => current.filter((_, itemIndex) => itemIndex !== index));
+    setCount((current) => Math.max(1, current - 1));
+  };
+
   async function importQuestionFile(file) {
     if (!file) return;
     setNotice(null);
@@ -194,6 +206,7 @@ export function TeacherCreateQuizPage() {
             <input type="file" accept=".json,.csv,application/json,text/csv" onChange={(event) => { importQuestionFile(event.target.files?.[0]); event.target.value = ''; }} />
             <small>{importing ? 'Reading file…' : 'JSON: { title, topic, level, passage, format, questions: [...] }. CSV headers: question, answer, difficulty, optionA–optionD, explanation.'}</small>
           </label>
+          <a className="teacher-quiz-sample-link" href="/mock-ielts-quiz.json" download>Download mock quiz JSON</a>
           <p className="teacher-quiz-guidance">Imported questions remain editable below. You can also enter them manually.</p>
         </div>
 
@@ -227,9 +240,10 @@ export function TeacherCreateQuizPage() {
         <div className="teacher-quiz-section">
           <h2>Questions and answer key</h2>
           <p className="teacher-quiz-guidance">Keep each question answerable from the passage. Add a short explanation to support review and student learning.</p>
+          <p className="teacher-quiz-guidance">{questions.length} questions · Edit imported questions here, or add and remove questions before saving.</p>
           {questions.map((question, index) => (
             <fieldset className="teacher-question-card" key={index}>
-              <legend>Question {index + 1}</legend>
+              <legend>Question {index + 1} <button type="button" className="teacher-question-remove" disabled={questions.length <= 1} onClick={() => removeQuestion(index)}>Remove</button></legend>
               <label>Question or statement<textarea required rows={2} value={question.content} onChange={(event) => updateQuestion(index, 'content', event.target.value)} placeholder={format === 'MATCHING_HEADINGS' ? 'Paragraph A' : 'Write a clear question or statement...'} /></label>
               {format === 'MULTIPLE_CHOICE_SINGLE' && <div className="teacher-option-fields">{question.options.map((option, optionIndex) => <label key={optionIndex}>Option {String.fromCharCode(65 + optionIndex)}<input required value={option} onChange={(event) => updateQuestion(index, 'options', question.options.map((entry, itemIndex) => itemIndex === optionIndex ? event.target.value : entry))} /></label>)}</div>}
               <div className="teacher-quiz-fields teacher-answer-fields">
@@ -239,6 +253,7 @@ export function TeacherCreateQuizPage() {
               </div>
             </fieldset>
           ))}
+          <button type="button" className="teacher-question-add" disabled={questions.length >= 40} onClick={addQuestion}>+ Add question</button>
         </div>
 
         {notice && <p className={`teacher-quiz-notice ${notice.type}`} role="status">{notice.text}</p>}
