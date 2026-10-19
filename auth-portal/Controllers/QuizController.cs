@@ -461,9 +461,13 @@ public class QuizController : ControllerBase
                 {
                     return BadRequest(new SaveQuizResponse { Success = false, Message = "Add at least one question before uploading the lesson." });
                 }
-                if (req.Price < 0)
+                if (req.Price < 0 || req.Price > 9_999_999_999.99m)
                 {
-                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Lesson price cannot be negative." });
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Lesson price must be between 0 and 9,999,999,999.99 VND." });
+                }
+                if (!req.IsFree && req.Price <= 0)
+                {
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Enter a price greater than zero for a paid lesson." });
                 }
 
                 materialId = Guid.NewGuid();
@@ -543,7 +547,7 @@ public class QuizController : ControllerBase
             {
                 items.Add(new
                 {
-                    materialId = reader.GetGuid(9).ToString(),
+                    materialId = reader.GetGuid(0).ToString(),
                     title = reader.GetString(1),
                     description = reader.IsDBNull(2) ? null : reader.GetString(2),
                     skill = reader.IsDBNull(3) ? null : reader.GetString(3),
@@ -552,7 +556,7 @@ public class QuizController : ControllerBase
                     price = reader.GetDecimal(6),
                     status = reader.GetString(7),
                     createdAt = reader.GetDateTime(8),
-                    quizId = reader.GetGuid(0).ToString(),
+                    quizId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
                     questionCount = reader.GetInt32(10)
                 });
             }
@@ -600,7 +604,7 @@ public class QuizController : ControllerBase
             {
                 items.Add(new
                 {
-                    materialId = reader.GetGuid(0).ToString(),
+                    materialId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
                     title = reader.GetString(1),
                     description = reader.IsDBNull(2) ? null : reader.GetString(2),
                     skill = reader.IsDBNull(3) ? null : reader.GetString(3),
@@ -609,8 +613,51 @@ public class QuizController : ControllerBase
                     price = reader.GetDecimal(6),
                     createdAt = reader.GetDateTime(7),
                     teacherName = reader.IsDBNull(8) ? null : reader.GetString(8),
-                    quizId = reader.IsDBNull(9) ? null : reader.GetGuid(9).ToString(),
+                    quizId = reader.GetGuid(0).ToString(),
                     questionCount = reader.GetInt32(10)
+                });
+            }
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpGet("packages")]
+    public IActionResult GetPackages()
+    {
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            const string sql = @"
+                SELECT PackageID, PackageName, Price, DurationMonths, AIQuizLimit, LevelTestLimit, UploadLimitMB,
+                       KnowledgeBaseAccess, HasSpeakingAI, HasSpeakingTeacher, HasWritingAI, HasWritingTeacher, WritingAILimited
+                FROM Package
+                WHERE IsActive = 1
+                ORDER BY Price, PackageName";
+            using var cmd = new SqlCommand(sql, conn);
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read())
+            {
+                items.Add(new
+                {
+                    packageId = reader.GetGuid(0).ToString(),
+                    name = reader.GetString(1),
+                    price = reader.GetDecimal(2),
+                    durationMonths = reader.GetInt32(3),
+                    aiQuizLimit = reader.GetInt32(4),
+                    levelTestLimit = reader.GetInt32(5),
+                    uploadLimitMB = reader.GetDouble(6),
+                    knowledgeBaseAccess = reader.GetString(7),
+                    hasSpeakingAI = reader.GetBoolean(8),
+                    hasSpeakingTeacher = reader.GetBoolean(9),
+                    hasWritingAI = reader.GetBoolean(10),
+                    hasWritingTeacher = reader.GetBoolean(11),
+                    writingAILimited = reader.GetBoolean(12)
                 });
             }
             return Ok(new { success = true, items });

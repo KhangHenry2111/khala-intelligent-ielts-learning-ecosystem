@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { learningApi } from '../../../shared/api';
 
@@ -75,7 +75,8 @@ export function ClassesPage() {
                 <div className="available-lesson-topline"><span className="admin-content-skill">{lesson.skill || 'IELTS'}</span><span className="available-lesson-level">{lesson.level || 'Mọi trình độ'}</span></div>
                 <h2>{lesson.title}</h2><p className="available-lesson-description">{lesson.description || 'Lesson luyện tập do giáo viên biên soạn.'}</p>
                 <div className="available-lesson-details"><span>{lesson.questionCount} câu hỏi</span>{lesson.quizId && <span>Quiz có sẵn</span>}</div>
-                <div className="available-lesson-footer"><span className={lesson.isFree ? 'available-lesson-free' : 'available-lesson-price'}>{lesson.isFree ? 'Miễn phí' : money(lesson.price)}</span><button className="feature-action learner-enroll-button" type="button" disabled={!lesson.isFree || busyId === lesson.materialId || registered.has(lesson.materialId)} onClick={() => enroll(lesson)}>{registered.has(lesson.materialId) ? 'Đã đăng ký' : busyId === lesson.materialId ? 'Đang đăng ký…' : lesson.isFree ? 'Đăng ký lesson' : 'Cần thanh toán'}</button></div>
+                <div className="available-lesson-footer"><span className={lesson.isFree ? 'available-lesson-free' : 'available-lesson-price'}>{lesson.isFree ? 'Miễn phí' : money(lesson.price)}</span>{lesson.isFree ? <button className="feature-action learner-enroll-button" type="button" disabled={busyId === lesson.materialId || registered.has(lesson.materialId)} onClick={() => enroll(lesson)}>{registered.has(lesson.materialId) ? 'Đã đăng ký' : busyId === lesson.materialId ? 'Đang đăng ký…' : 'Đăng ký lesson'}</button> : <button className="secondary-btn learner-enroll-button" type="button" disabled>Mua lẻ — sắp có</button>}</div>
+                {!lesson.isFree && <small><Link to="/user/dashboard">Xem gói thành viên</Link></small>}
               </article>)}
             </div>}
           </>

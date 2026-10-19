@@ -346,3 +346,57 @@ _______________________________________
 - Read mustRead.md and followed its required session history workflow through terminalToolsForAI/addSession.py.
 - Registered this request as session 19 and marked it Done using the prescribed CLI.
 _______________________________________
+
+[Id 20]:
+[Model_name]: Codex
+[Time]: 2026-10-19 12:14
+[Title]: Chuyển hướng sau khi tạo quiz giáo viên
+[Status]: Done
+[Changed_File]:
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/quizzes/TeacherCreateQuizPage.jsx
+- ielts-study-assistant/auth-portal/wwwroot/index.html
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-BOdQiMPC.css
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-DcVak3ax.js
+[Description]
+- Điều hướng từ /teacher/upload-quiz sang /teacher/lessons sau khi quiz được tạo thành công theo yêu cầu trong mustRead.md.
+- Sau khi API lưu quiz giáo viên thành công, điều hướng từ /teacher/upload-quiz sang /teacher/lessons; lỗi lưu quiz vẫn hiển thị tại form.
+- Xác minh bằng npm run build trong auth-portal/ClientApp; build thành công.
+_______________________________________
+
+[Id 21]:
+[Model_name]: Codex
+[Time]: 2026-10-19 12:18
+[Title]: Sửa lỗi Null khi tải danh sách bài học
+[Status]: Done
+[Changed_File]:
+- ielts-study-assistant/auth-portal/Controllers/QuizController.cs
+[Description]
+- Điều tra lỗi Data is Null trên /teacher/lessons, sửa nguồn backend hoặc ánh xạ dữ liệu và xác minh build/tests.
+- Sửa GetTeacherLessons đọc nhầm MaterialID từ cột QuizID và gọi GetGuid trên QuizID có thể NULL; ánh xạ MaterialID từ cột 0 và trả quizId null an toàn.
+- Xác minh dotnet build thành công: 0 warning, 0 error; đầu ra được chuyển sang thư mục riêng do ứng dụng đang chạy khóa apphost.
+_______________________________________
+
+[Id 22]:
+[Model_name]: Codex
+[Time]: 2026-10-19 12:33
+[Title]: Hoàn thiện giá bài học và quyền mua theo hạng
+[Status]: Done
+[Changed_File]:
+- ielts-study-assistant/auth-portal/Controllers/QuizController.cs
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/quizzes/TeacherCreateQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/plans/PlansPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/available-quiz/AvailableQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/classes/ClassesPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/api/quizApi.js
+- ielts-study-assistant/auth-portal/ClientApp/src/styles.css
+- ielts-study-assistant/auth-portal/wwwroot/index.html
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-CfUWw2d1.css
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-CDsUPvvG.js
+- ielts-study-assistant/scripts/seed_membership_packages.sql
+[Description]
+- Rà soát UI/API/DB cho giá bài học giáo viên, mua lẻ và gói thành viên Bronze/Silver/Gold; hoàn thiện logic cho user và teacher.
+- Thêm trường nhập giá/miễn phí lesson cho teacher tại upload-quiz; API lưu giá vào Material và từ chối giá paid không hợp lệ.
+- Tạo API catalog Package và UI User hiển thị quyền lợi/giá Bronze-Silver-Gold từ backend; thêm UX mua lesson lẻ và mua membership ở trạng thái sẽ bổ sung sau.
+- Sửa API available-lessons trả nhầm MaterialID và QuizID.
+- Build npm run build và dotnet build đều thành công, 0 warning/0 error.
+_______________________________________

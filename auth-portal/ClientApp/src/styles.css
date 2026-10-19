@@ -433,6 +433,7 @@ body {
   background: var(--secondary-color);
   color: #062b20;
 }
+.plan-button:disabled { opacity: .65; cursor: not-allowed; }
 
 .feature-table-wrap {
   overflow: hidden;

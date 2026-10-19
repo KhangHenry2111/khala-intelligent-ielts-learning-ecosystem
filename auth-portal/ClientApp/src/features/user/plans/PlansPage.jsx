@@ -1,76 +1,153 @@
-const plans = [
-  { name: 'Bronze', price: 'Free', tone: 'bronze' },
-  { name: 'Silver', price: '199,000 VND / month', tone: 'silver', featured: true },
-  { name: 'Gold', price: '399,000 VND / month', tone: 'gold' },
+import { useEffect, useState } from 'react';
+import { useAuth } from '../../../shared/auth/AuthContext';
+import { quizApi } from '../../../shared/api';
+import { userRank } from '../../../shared/lib/roles';
+
+const featureLabels = [
+  'Available quizzes',
+  'AI quiz generation',
+  'Level test',
+  'Document upload',
+  'Knowledge base',
+  'AI result analysis',
+  'AI speaking practice',
+  'Teacher speaking feedback',
+  'AI writing feedback',
+  'Teacher writing feedback',
 ];
 
-const features = [
-  ['Available quizzes', 'Unlimited', 'Unlimited', 'Unlimited'],
-  ['AI quiz generation', '8 per month', '60 per month', '250 per month'],
-  ['Level test', '1 per month', '4 per month', '12 per month'],
-  ['Document upload', '5 MB', '20 MB', '50 MB'],
-  ['Knowledge base', 'Basic', 'Full', 'Full'],
-  ['AI result analysis', '✓', '✓', '✓'],
-  ['AI speaking practice', '✗', '✓', '✓'],
-  ['Teacher speaking feedback', '✗', '✗', '✓'],
-  ['AI writing feedback', 'Limited', '✓', '✓'],
-  ['Teacher writing feedback', '✗', '✗', '✓'],
-];
+const money = (value) => new Intl.NumberFormat('vi-VN', {
+  style: 'currency',
+  currency: 'VND',
+  maximumFractionDigits: 0,
+}).format(value || 0);
 
-function PlanCard({ plan }) {
+function planPrice(plan) {
+  if (plan.price === 0) return 'Free';
+  const duration = plan.durationMonths === 1 ? 'month' : `${plan.durationMonths} months`;
+  return `${money(plan.price)} / ${duration}`;
+}
+
+function planTier(plan) {
+  const name = String(plan.name || '').trim().toLowerCase();
+  if (name === 'bronze' || name === 'đồng') return 'bronze';
+  if (name === 'silver' || name === 'bạc') return 'silver';
+  if (name === 'gold' || name === 'vàng') return 'gold';
+  return '';
+}
+
+function planName(plan) {
+  return { bronze: 'Đồng', silver: 'Bạc', gold: 'Vàng' }[planTier(plan)] || plan.name;
+}
+
+function featureValue(plan, index) {
+  switch (index) {
+    case 0: return 'Unlimited';
+    case 1: return `${plan.aiQuizLimit} per month`;
+    case 2: return `${plan.levelTestLimit} per month`;
+    case 3: return `${plan.uploadLimitMB} MB`;
+    case 4: return plan.knowledgeBaseAccess;
+    case 5: return '✓';
+    case 6: return plan.hasSpeakingAI ? '✓' : '✗';
+    case 7: return plan.hasSpeakingTeacher ? '✓' : '✗';
+    case 8: return !plan.hasWritingAI ? '✗' : plan.writingAILimited ? 'Limited' : '✓';
+    case 9: return plan.hasWritingTeacher ? '✓' : '✗';
+    default: return '—';
+  }
+}
+
+function PlanCard({ plan, isCurrent }) {
+  const tier = planTier(plan);
+  const featured = tier === 'silver';
   return (
-    <article className={`plan-card ${plan.featured ? 'featured' : ''}`}>
-      {plan.featured && <span className="plan-ribbon">Most popular</span>}
-      <div className={`plan-icon ${plan.tone}`}>{plan.name[0]}</div>
-      <h2>{plan.name}</h2>
-      <p className="plan-price">{plan.price}</p>
-      <button className={`plan-button ${plan.featured ? 'primary' : ''}`} type="button">
-        {plan.featured ? 'Upgrade plan' : 'Current plan'}
+    <article className={`plan-card ${featured ? 'featured' : ''}`}>
+      {featured && <span className="plan-ribbon">Most popular</span>}
+      <div className={`plan-icon ${tier}`}>{planName(plan)[0]}</div>
+      <h2>{planName(plan)}</h2>
+      <p className="plan-price">{planPrice(plan)}</p>
+      <button className={`plan-button ${featured ? 'primary' : ''}`} type="button" disabled>
+        {isCurrent ? 'Current plan' : 'Payment coming soon'}
       </button>
     </article>
   );
 }
 
 export function PlansPage() {
+  const { user } = useAuth();
+  const [plans, setPlans] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    quizApi.packages()
+      .then((result) => {
+        if (active) setPlans(result.items || []);
+      })
+      .catch((cause) => {
+        if (active) setError(cause.message || 'Could not load membership plans.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
+
+  const currentRank = userRank(user);
+
   return (
     <div className="plans-page">
       <header className="plans-heading">
         <span className="eyebrow">IELTS AI learning</span>
         <h1>Choose a plan that fits your goals</h1>
-        <p>Focus on the tools that help you improve steadily every day.</p>
+        <p>Compare Bronze, Silver and Gold membership benefits. Lesson purchases and membership payments will be enabled later.</p>
       </header>
-      <div className="plan-cards" aria-label="Learning plans">
-        {plans.map((plan) => <PlanCard plan={plan} key={plan.name} />)}
-      </div>
-      <section className="feature-table-wrap" aria-label="Plan comparisons">
-        <div className="feature-table-head">
-          <div>
-            <span className="eyebrow">Compare benefits</span>
-            <h2>Everything you need to prepare for IELTS</h2>
-          </div>
-          <span className="feature-count">10 benefits</span>
-        </div>
-        <div className="feature-table" role="table">
-          <div className="feature-row feature-row-header" role="row">
-            <span role="columnheader">Feature</span>
-            {plans.map((plan) => <span role="columnheader" key={plan.name}>{plan.name}</span>)}
-          </div>
-          {features.map(([label, ...values]) => (
-            <div className="feature-row" role="row" key={label}>
-              <span className="feature-label" role="rowheader">{label}</span>
-              {values.map((value, index) => (
-                <span
-                  className={`${value === '✓' ? 'feature-yes' : value === '✗' ? 'feature-no' : ''}`}
-                  role="cell"
-                  key={`${label}-${index}`}
-                >
-                  {value}
-                </span>
-              ))}
-            </div>
+      {error && <p className="teacher-quiz-notice error" role="alert">{error}</p>}
+      {loading ? <p className="content-list-state" role="status">Loading membership plans…</p> : plans.length === 0 ? (
+        <p className="content-list-state" role="status">No active membership plans are configured.</p>
+      ) : <>
+        <div className="plan-cards" aria-label="Learning plans">
+          {plans.map((plan) => (
+            <PlanCard
+              plan={plan}
+              isCurrent={planTier(plan) === currentRank}
+              key={plan.packageId}
+            />
           ))}
         </div>
-      </section>
+        <section className="feature-table-wrap" aria-label="Plan comparisons">
+          <div className="feature-table-head">
+            <div>
+              <span className="eyebrow">Compare benefits</span>
+              <h2>Everything you need to prepare for IELTS</h2>
+            </div>
+            <span className="feature-count">{featureLabels.length} benefits</span>
+          </div>
+          <div className="feature-table" role="table">
+            <div className="feature-row feature-row-header" role="row">
+              <span role="columnheader">Feature</span>
+              {plans.map((plan) => <span role="columnheader" key={plan.packageId}>{planName(plan)}</span>)}
+            </div>
+            {featureLabels.map((label, featureIndex) => (
+              <div className="feature-row" role="row" key={label}>
+                <span className="feature-label" role="rowheader">{label}</span>
+                {plans.map((plan) => {
+                  const value = featureValue(plan, featureIndex);
+                  return (
+                    <span
+                      className={value === '✓' ? 'feature-yes' : value === '✗' ? 'feature-no' : ''}
+                      role="cell"
+                      key={plan.packageId}
+                    >
+                      {value}
+                    </span>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </section>
+      </>}
     </div>
   );
 }

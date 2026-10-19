@@ -36,6 +36,7 @@ export const quizApi = {
     headers: { Authorization: `Bearer ${token}` },
   }),
   availableLessons: () => request('/api/quiz/available-lessons'),
+  packages: () => request('/api/quiz/packages'),
   content: (token) => request('/api/quiz/content', { headers: { Authorization: `Bearer ${token}` } }),
   contentDetails: (id, token) => request(`/api/quiz/content/${id}`, {
     headers: { Authorization: 'Bearer ' + token },

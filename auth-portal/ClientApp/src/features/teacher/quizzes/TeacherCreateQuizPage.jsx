@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { quizApi } from '../../../shared/api';
 
@@ -36,11 +37,14 @@ function parseCsv(text) {
 }
 
 export function TeacherCreateQuizPage() {
+  const navigate = useNavigate();
   const { user } = useAuth();
   const [title, setTitle] = useState('');
   const [topic, setTopic] = useState('');
   const [level, setLevel] = useState('Intermediate');
   const [passage, setPassage] = useState('');
+  const [isFree, setIsFree] = useState(true);
+  const [price, setPrice] = useState('0');
   const [format, setFormat] = useState(formats[0].code);
   const [count, setCount] = useState(5);
   const [wordLimit, setWordLimit] = useState('NO MORE THAN TWO WORDS');
@@ -127,6 +131,11 @@ export function TeacherCreateQuizPage() {
       setNotice({ type: 'error', text: 'Không tìm thấy ID giáo viên trong phiên đăng nhập. Vui lòng đăng xuất và đăng nhập lại.' });
       return;
     }
+    const parsedPrice = Number(price);
+    if (!isFree && (!Number.isFinite(parsedPrice) || parsedPrice <= 0 || parsedPrice > 9_999_999_999.99)) {
+      setNotice({ type: 'error', text: 'Nhập giá lesson lớn hơn 0 và không vượt quá 9.999.999.999,99 VND.' });
+      return;
+    }
     if (passage.trim().split(/\s+/).filter(Boolean).length < 40) {
       setNotice({ type: 'error', text: 'Đoạn đọc cần có ít nhất 40 từ để tạo câu hỏi Reading có ngữ cảnh.' });
       return;
@@ -170,11 +179,13 @@ export function TeacherCreateQuizPage() {
 
     setSaving(true);
     try {
-      const result = await quizApi.saveTeacherQuiz({
+      await quizApi.saveTeacherQuiz({
         title: title.trim(),
         skill: 'Reading',
         level,
         creatorId: teacherId,
+        isFree,
+        price: isFree ? 0 : parsedPrice,
         passage: {
           title: title.trim(),
           content: passage.trim(),
@@ -183,7 +194,7 @@ export function TeacherCreateQuizPage() {
         },
         questionGroups: [questionGroup],
       }, user?.accessToken);
-      setNotice({ type: 'success', text: `Đã lưu quiz ${result.quizId || ''} với ${result.questionsCount} câu ở trạng thái Draft.` });
+      navigate('/teacher/lessons');
     } catch (error) {
       setNotice({ type: 'error', text: error.message || 'Không thể lưu quiz.' });
     } finally {
@@ -218,6 +229,22 @@ export function TeacherCreateQuizPage() {
             <label>IELTS level<select value={level} onChange={(event) => setLevel(event.target.value)}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
           </div>
           <label className="teacher-quiz-wide-field">Reading passage<textarea required rows={8} value={passage} onChange={(event) => setPassage(event.target.value)} placeholder="Paste the reading passage here (at least 40 words)..." /><small>{passage.trim().split(/\s+/).filter(Boolean).length} words · Use original or properly licensed material.</small></label>
+        </div>
+
+        <div className="teacher-quiz-section">
+          <h2>Lesson pricing</h2>
+          <div className="teacher-quiz-fields">
+            <label>Access type
+              <select value={isFree ? 'Free' : 'Paid'} onChange={(event) => setIsFree(event.target.value === 'Free')}>
+                <option value="Free">Free</option>
+                <option value="Paid">Paid — individual purchase</option>
+              </select>
+            </label>
+            {!isFree && <label>Price (VND)
+              <input type="number" min="1" max="9999999999.99" step="1" required value={price} onChange={(event) => setPrice(event.target.value)} />
+              <small>Payment and paid access activation will be added later.</small>
+            </label>}
+          </div>
         </div>
 
         <div className="teacher-quiz-section">
