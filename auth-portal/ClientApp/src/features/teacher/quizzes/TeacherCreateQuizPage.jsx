@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { quizApi } from '../../../shared/api';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 const formats = [
   { code: 'MULTIPLE_CHOICE_SINGLE', name: 'Multiple choice', hint: 'Four options, one correct answer.' },
@@ -37,6 +38,7 @@ function parseCsv(text) {
 }
 
 export function TeacherCreateQuizPage() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [title, setTitle] = useState('');
@@ -205,86 +207,86 @@ export function TeacherCreateQuizPage() {
   return (
     <div className="dashboard-container teacher-quiz-page">
       <section className="glass-card teacher-quiz-intro">
-        <span className="eyebrow">Teacher workspace</span>
-        <h1>Upload an IELTS quiz</h1>
-        <p>Import a question file or enter questions here. Set an answer key and difficulty for each question, review the quiz, then save it to the database.</p>
+        <span className="eyebrow">{t('Teacher workspace')}</span>
+        <h1>{t('Upload an IELTS quiz')}</h1>
+        <p>{t('Import a question file or enter questions here. Set an answer key and difficulty for each question, review the quiz, then save it to the database.')}</p>
       </section>
 
       <form className="glass-card teacher-quiz-form" onSubmit={handleSubmit}>
         <div className="teacher-quiz-section">
-          <h2>Import questions</h2>
-          <label className="teacher-quiz-file-upload">Question file (JSON or CSV)
+          <h2>{t('Import questions')}</h2>
+          <label className="teacher-quiz-file-upload">{t('Question file (JSON or CSV)')}
             <input type="file" accept=".json,.csv,application/json,text/csv" onChange={(event) => { importQuestionFile(event.target.files?.[0]); event.target.value = ''; }} />
-            <small>{importing ? 'Reading file…' : 'JSON: { title, topic, level, passage, format, questions: [...] }. CSV headers: question, answer, difficulty, optionA–optionD, explanation.'}</small>
+            <small>{importing ? t('Reading file…') : t('JSON: { title, topic, level, passage, format, questions: [...] }. CSV headers: question, answer, difficulty, optionA–optionD, explanation.')}</small>
           </label>
-          <a className="teacher-quiz-sample-link" href="/mock-ielts-quiz.json" download>Download mock quiz JSON</a>
-          <p className="teacher-quiz-guidance">Imported questions remain editable below. You can also enter them manually.</p>
+          <a className="teacher-quiz-sample-link" href="/mock-ielts-quiz.json" download>{t('Download mock quiz JSON')}</a>
+          <p className="teacher-quiz-guidance">{t('Imported questions remain editable below. You can also enter them manually.')}</p>
         </div>
 
         <div className="teacher-quiz-section">
-          <h2>Quiz details</h2>
+          <h2>{t('Quiz details')}</h2>
           <div className="teacher-quiz-fields">
-            <label>Quiz title<input required maxLength={255} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Urban farming and future cities" /></label>
-            <label>Topic<input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Environment, science, history..." /></label>
-            <label>IELTS level<select value={level} onChange={(event) => setLevel(event.target.value)}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
+            <label>{t('Quiz title')}<input required maxLength={255} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t('e.g. Urban farming and future cities')} /></label>
+            <label>{t('Topic')}<input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder={t('Environment, science, history...')} /></label>
+            <label>{t('IELTS level')}<select value={level} onChange={(event) => setLevel(event.target.value)}><option value="Beginner">{t('Beginner')}</option><option value="Intermediate">{t('Intermediate')}</option><option value="Advanced">{t('Advanced')}</option></select></label>
           </div>
-          <label className="teacher-quiz-wide-field">Reading passage<textarea required rows={8} value={passage} onChange={(event) => setPassage(event.target.value)} placeholder="Paste the reading passage here (at least 40 words)..." /><small>{passage.trim().split(/\s+/).filter(Boolean).length} words · Use original or properly licensed material.</small></label>
+          <label className="teacher-quiz-wide-field">{t('Reading passage')}<textarea required rows={8} value={passage} onChange={(event) => setPassage(event.target.value)} placeholder={t('Paste the reading passage here (at least 40 words)...')} /><small>{passage.trim().split(/\s+/).filter(Boolean).length} {t('words')} · {t('Use original or properly licensed material.')}</small></label>
         </div>
 
         <div className="teacher-quiz-section">
-          <h2>Lesson pricing</h2>
+          <h2>{t('Lesson pricing')}</h2>
           <div className="teacher-quiz-fields">
-            <label>Access type
+            <label>{t('Access type')}
               <select value={isFree ? 'Free' : 'Paid'} onChange={(event) => setIsFree(event.target.value === 'Free')}>
-                <option value="Free">Free</option>
-                <option value="Paid">Paid — individual purchase</option>
+                <option value="Free">{t('Free')}</option>
+                <option value="Paid">{t('Paid — individual purchase')}</option>
               </select>
             </label>
-            {!isFree && <label>Price (VND)
+            {!isFree && <label>{t('Price (VND)')}
               <input type="number" min="1" max="9999999999.99" step="1" required value={price} onChange={(event) => setPrice(event.target.value)} />
-              <small>Payment and paid access activation will be added later.</small>
+              <small>{t('Payment and paid access activation will be added later.')}</small>
             </label>}
           </div>
         </div>
 
         <div className="teacher-quiz-section">
-          <h2>Question format</h2>
+          <h2>{t('Question format')}</h2>
           <div className="teacher-format-grid">
             {formats.map((item) => (
               <label key={item.code} className={`teacher-format-option ${format === item.code ? 'selected' : ''}`}>
                 <input type="radio" name="question-format" value={item.code} checked={format === item.code} onChange={() => setFormat(item.code)} />
-                <strong>{item.name}</strong><span>{item.hint}</span>
+                <strong>{t(item.name)}</strong><span>{t(item.hint)}</span>
               </label>
             ))}
           </div>
           <div className="teacher-quiz-fields teacher-quiz-settings">
-            <label>Number of questions<input type="number" min="1" max="40" value={count} onChange={(event) => changeCount(event.target.value)} /></label>
-            {format === 'SENTENCE_COMPLETION' && <label>IELTS word limit<select value={wordLimit} onChange={(event) => setWordLimit(event.target.value)}><option>NO MORE THAN ONE WORD</option><option>NO MORE THAN TWO WORDS</option><option>NO MORE THAN THREE WORDS</option><option>ONE WORD AND/OR A NUMBER</option></select></label>}
+            <label>{t('Number of questions')}<input type="number" min="1" max="40" value={count} onChange={(event) => changeCount(event.target.value)} /></label>
+            {format === 'SENTENCE_COMPLETION' && <label>{t('IELTS word limit')}<select value={wordLimit} onChange={(event) => setWordLimit(event.target.value)}><option>NO MORE THAN ONE WORD</option><option>NO MORE THAN TWO WORDS</option><option>NO MORE THAN THREE WORDS</option><option>ONE WORD AND/OR A NUMBER</option></select></label>}
           </div>
-          {format === 'MATCHING_HEADINGS' && <label className="teacher-quiz-wide-field">Headings (one per line)<textarea rows={5} value={headings} onChange={(event) => setHeadings(event.target.value)} /><small>Write each option with a unique label, for example “i. A new approach”.</small></label>}
+          {format === 'MATCHING_HEADINGS' && <label className="teacher-quiz-wide-field">{t('Headings (one per line)')}<textarea rows={5} value={headings} onChange={(event) => setHeadings(event.target.value)} /><small>{t('Write each option with a unique label, for example “i. A new approach”.')}</small></label>}
         </div>
 
         <div className="teacher-quiz-section">
-          <h2>Questions and answer key</h2>
-          <p className="teacher-quiz-guidance">Keep each question answerable from the passage. Add a short explanation to support review and student learning.</p>
-          <p className="teacher-quiz-guidance">{questions.length} questions · Edit imported questions here, or add and remove questions before saving.</p>
+          <h2>{t('Questions and answer key')}</h2>
+          <p className="teacher-quiz-guidance">{t('Keep each question answerable from the passage. Add a short explanation to support review and student learning.')}</p>
+          <p className="teacher-quiz-guidance">{questions.length} {t('questions')} · {t('Edit imported questions here, or add and remove questions before saving.')}</p>
           {questions.map((question, index) => (
             <fieldset className="teacher-question-card" key={index}>
-              <legend>Question {index + 1} <button type="button" className="teacher-question-remove" disabled={questions.length <= 1} onClick={() => removeQuestion(index)}>Remove</button></legend>
-              <label>Question or statement<textarea required rows={2} value={question.content} onChange={(event) => updateQuestion(index, 'content', event.target.value)} placeholder={format === 'MATCHING_HEADINGS' ? 'Paragraph A' : 'Write a clear question or statement...'} /></label>
+              <legend>{t('Question')} {index + 1} <button type="button" className="teacher-question-remove" disabled={questions.length <= 1} onClick={() => removeQuestion(index)}>{t('Remove')}</button></legend>
+              <label>{t('Question or statement')}<textarea required rows={2} value={question.content} onChange={(event) => updateQuestion(index, 'content', event.target.value)} placeholder={t(format === 'MATCHING_HEADINGS' ? 'Paragraph A' : 'Write a clear question or statement...')} /></label>
               {format === 'MULTIPLE_CHOICE_SINGLE' && <div className="teacher-option-fields">{question.options.map((option, optionIndex) => <label key={optionIndex}>Option {String.fromCharCode(65 + optionIndex)}<input required value={option} onChange={(event) => updateQuestion(index, 'options', question.options.map((entry, itemIndex) => itemIndex === optionIndex ? event.target.value : entry))} /></label>)}</div>}
               <div className="teacher-quiz-fields teacher-answer-fields">
-                <label>Correct answer{format === 'MULTIPLE_CHOICE_SINGLE' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">Choose answer</option>{['A', 'B', 'C', 'D'].map((answer) => <option key={answer}>{answer}</option>)}</select> : format === 'TRUE_FALSE_NOT_GIVEN' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">Choose answer</option>{['True', 'False', 'Not Given'].map((answer) => <option key={answer}>{answer}</option>)}</select> : format === 'MATCHING_HEADINGS' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">Choose heading</option>{headings.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => <option key={line}>{line.split(/[.\s]/)[0]}</option>)}</select> : <input required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} placeholder="Exact answer from the passage" />}</label>
-                <label>Question difficulty<select value={question.difficulty || level} onChange={(event) => updateQuestion(index, 'difficulty', event.target.value)}><option>Beginner</option><option>Intermediate</option><option>Advanced</option></select></label>
-                <label>Explanation<input value={question.explanation} onChange={(event) => updateQuestion(index, 'explanation', event.target.value)} placeholder="Why this answer is correct" /></label>
+                <label>{t('Correct answer')}{format === 'MULTIPLE_CHOICE_SINGLE' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">{t('Choose answer')}</option>{['A', 'B', 'C', 'D'].map((answer) => <option key={answer} value={answer}>{answer}</option>)}</select> : format === 'TRUE_FALSE_NOT_GIVEN' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">{t('Choose answer')}</option>{['True', 'False', 'Not Given'].map((answer) => <option key={answer} value={answer}>{t(answer)}</option>)}</select> : format === 'MATCHING_HEADINGS' ? <select required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)}><option value="">{t('Choose heading')}</option>{headings.split('\n').map((line) => line.trim()).filter(Boolean).map((line) => <option key={line}>{line.split(/[.\s]/)[0]}</option>)}</select> : <input required value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} placeholder={t('Exact answer from the passage')} />}</label>
+                <label>{t('Question difficulty')}<select value={question.difficulty || level} onChange={(event) => updateQuestion(index, 'difficulty', event.target.value)}><option value="Beginner">{t('Beginner')}</option><option value="Intermediate">{t('Intermediate')}</option><option value="Advanced">{t('Advanced')}</option></select></label>
+                <label>{t('Explanation')}<input value={question.explanation} onChange={(event) => updateQuestion(index, 'explanation', event.target.value)} placeholder={t('Why this answer is correct')} /></label>
               </div>
             </fieldset>
           ))}
-          <button type="button" className="teacher-question-add" disabled={questions.length >= 40} onClick={addQuestion}>+ Add question</button>
+          <button type="button" className="teacher-question-add" disabled={questions.length >= 40} onClick={addQuestion}>+ {t('Add question')}</button>
         </div>
 
-        {notice && <p className={`teacher-quiz-notice ${notice.type}`} role="status">{notice.text}</p>}
-        <div className="teacher-quiz-submit"><span>Saved as a teacher-created Draft quiz in the configured SQL database.</span><button type="submit" disabled={saving}>{saving ? 'Saving…' : 'Save quiz'}</button></div>
+        {notice && <p className={`teacher-quiz-notice ${notice.type}`} role="status">{t(notice.text)}</p>}
+        <div className="teacher-quiz-submit"><span>{t('Saved as a teacher-created Draft quiz in the configured SQL database.')}</span><button type="submit" disabled={saving}>{saving ? t('Saving…') : t('Save quiz')}</button></div>
       </form>
     </div>
   );

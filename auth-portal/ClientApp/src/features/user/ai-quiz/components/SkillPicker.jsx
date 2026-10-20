@@ -1,6 +1,9 @@
+import { useLanguage } from '../../../../shared/i18n/LanguageContext';
+
 export function SkillPicker({ value, onChange, options = ['Reading', 'Speaking', 'Writing', 'Listening', 'All'] }) {
+  const { t } = useLanguage();
   return (
-    <div className="skill-picker" role="group" aria-label="Select skill">
+    <div className="skill-picker" role="group" aria-label={t('Select skill')}>
       {options.map((option) => (
         <button
           className={value === option ? 'selected' : ''}
@@ -8,7 +11,7 @@ export function SkillPicker({ value, onChange, options = ['Reading', 'Speaking',
           type="button"
           onClick={() => onChange(option)}
         >
-          {option}
+          {t(option)}
         </button>
       ))}
     </div>

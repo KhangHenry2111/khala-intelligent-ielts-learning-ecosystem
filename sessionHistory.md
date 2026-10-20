@@ -400,3 +400,62 @@ _______________________________________
 - Sửa API available-lessons trả nhầm MaterialID và QuizID.
 - Build npm run build và dotnet build đều thành công, 0 warning/0 error.
 _______________________________________
+
+[Id 23]:
+[Model_name]: Codex
+[Time]: 2026-10-20 13:05
+[Title]: Implementing quiz-taking, plans deduplication and bilingual UI
+[Status]: Done
+[Changed_File]:
+- ielts-study-assistant/auth-portal/ClientApp/src/app/AppRouter.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/admin/accounts/AccountsPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/admin/content/ContentPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/admin/teachers/TeachersPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/auth/AuthPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/auth/components/AuthBrandPanel.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/auth/components/AuthForm.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/profile/ProfilePage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/ai-review/AiReviewPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/ai-review/components/ReviewItem.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/classes/ClassesPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/dashboard/TeacherDashboardPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/grading/GradingPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/lessons/LessonsPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/lessons/UploadLessonPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/teacher/quizzes/TeacherCreateQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/ai-quiz/AiQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/ai-quiz/components/QuizGeneratorForm.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/ai-quiz/components/QuizPreview.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/ai-quiz/components/SkillPicker.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/available-quiz/AvailableQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/classes/ClassesPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/plans/PlansPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/results/ResultsPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/main.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/api/quizApi.js
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/layout/Sidebar.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/layout/Topbar.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/ActionGrid.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/DataTable.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/FeatureShell.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/InfoList.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/SectionHead.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/StatGroup.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/ui/WorkspaceHero.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/styles.css
+- ielts-study-assistant/auth-portal/Controllers/QuizController.cs
+- ielts-study-assistant/auth-portal/Models/QuizModels.cs
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-CDsUPvvG.js
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-CfUWw2d1.css
+- ielts-study-assistant/auth-portal/wwwroot/index.html
+- ielts-study-assistant/auth-portal/ClientApp/src/features/user/available-quiz/TakeQuizPage.jsx
+- ielts-study-assistant/auth-portal/ClientApp/src/shared/i18n/LanguageContext.jsx
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-DZwrNY2s.css
+- ielts-study-assistant/auth-portal/wwwroot/assets/index-DkcQIvfl.js
+[Description]
+- Read mustRead.md; implement learner quiz flow, deduplicate Bronze/Silver/Gold plans, and add Vietnamese-English language switching.
+- Implemented learner quiz play, server-side scoring, attempt persistence and quiz history without exposing answer keys before submission.
+- Deduplicated identical Bronze, Silver and Gold membership packages at the API and UI layers.
+- Added Vietnamese-English language switching and translated active learner, teacher, administrator, profile and authentication screens.
+- Validation: frontend and ASP.NET builds succeeded. Existing .NET tests are blocked by the pre-existing FakeAuthService missing IAuthService.RevokeSessions; build outputs were isolated to avoid the running AuthPortal process lock.
+_______________________________________

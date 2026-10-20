@@ -3,6 +3,7 @@ import { adminAccountsApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { DataTable } from '../../../shared/ui/DataTable';
 import { SectionHead } from '../../../shared/ui/SectionHead';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 const statuses = ['Active', 'Pending', 'Suspended', 'Deleted'];
 
@@ -80,6 +81,7 @@ function formatReadOnlyValue(value) {
 }
 
 function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
+  const { t } = useLanguage();
   const [draft, setDraft] = useState(() => ({ ...account, newPassword: '' }));
   const fields = [...commonFields, ...(account.accountType === 'Teacher' ? teacherFields : userFields)];
 
@@ -110,10 +112,10 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
       <section className="content-detail-dialog admin-account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-editor-title">
         <header className="content-detail-header">
           <div>
-            <span className="content-detail-eyebrow">Edit {account.accountType} account</span>
+            <span className="content-detail-eyebrow">{t('Edit')} {t(account.accountType)} {t('account')}</span>
             <h2 id="account-editor-title">{account.fullName}</h2>
           </div>
-          <button type="button" className="content-detail-close" onClick={onClose} disabled={saving} aria-label="Close account editor">×</button>
+          <button type="button" className="content-detail-close" onClick={onClose} disabled={saving} aria-label={t('Close account editor')}>×</button>
         </header>
         <form
           className="admin-account-form"
@@ -122,11 +124,11 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
             onSave(draft);
           }}
         >
-          {error && <p className="teacher-quiz-notice error" role="alert">{error}</p>}
+          {error && <p className="teacher-quiz-notice error" role="alert">{t(error)}</p>}
           <div className="teacher-form-grid admin-account-fields">
             {fields.map((field) => (
               <label key={field.key} className={field.type === 'textarea' ? 'admin-account-field-wide' : ''}>
-                {field.label}
+                {t(field.label)}
                 {field.type === 'textarea' ? (
                   <textarea
                     rows="4"
@@ -141,12 +143,12 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
                     required={field.required}
                     onChange={(event) => updateField(field, event.target.value)}
                   >
-                    {!field.required && <option value="">Not set</option>}
+                    {!field.required && <option value="">{t('Not set')}</option>}
                     {field.options.map((option) => (
-                      <option key={option} value={option}>{option}</option>
+                      <option key={option} value={option}>{t(option)}</option>
                     ))}
                     {draft[field.key] && !field.options.includes(draft[field.key]) && (
-                      <option value={draft[field.key]}>{draft[field.key]}</option>
+                      <option value={draft[field.key]}>{t(draft[field.key])}</option>
                     )}
                   </select>
                 ) : field.type === 'boolean' ? (
@@ -154,17 +156,17 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
                     value={draft[field.key] == null ? '' : String(draft[field.key])}
                     onChange={(event) => updateField(field, event.target.value)}
                   >
-                    <option value="">Not set</option>
-                    <option value="true">Yes</option>
-                    <option value="false">No</option>
+                    <option value="">{t('Not set')}</option>
+                    <option value="true">{t('Yes')}</option>
+                    <option value="false">{t('No')}</option>
                   </select>
                 ) : field.type === 'package' ? (
                   <select
                     value={draft.packageId || ''}
                     onChange={(event) => updateField(field, event.target.value)}
                   >
-                    <option value="">No package</option>
-                    {packages.map((item) => <option key={item.id} value={item.id}>{item.name}{item.isActive ? '' : ' (inactive)'}</option>)}
+                    <option value="">{t('No package')}</option>
+                    {packages.map((item) => <option key={item.id} value={item.id}>{t(item.name)}{item.isActive ? '' : ` (${t('inactive')})`}</option>)}
                   </select>
                 ) : (
                   <input
@@ -180,23 +182,23 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
                     onChange={(event) => updateField(field, event.target.value)}
                   />
                 )}
-                {field.help && <small>{field.help}</small>}
+                {field.help && <small>{t(field.help)}</small>}
               </label>
             ))}
           </div>
 
           <section className="admin-account-readonly">
-            <h3>System fields (read-only)</h3>
+            <h3>{t('System fields (read-only)')}</h3>
             <div className="content-detail-meta">
               {readOnlyFields[account.accountType].map(([label, key]) => (
-                <div key={key}><span>{label}</span><strong>{formatReadOnlyValue(account[key])}</strong></div>
+                <div key={key}><span>{t(label)}</span><strong>{t(formatReadOnlyValue(account[key]))}</strong></div>
               ))}
             </div>
           </section>
 
           <footer className="admin-account-form-actions">
-            <button type="button" className="admin-content-view" onClick={onClose} disabled={saving}>Cancel</button>
-            <button type="submit" className="admin-content-refresh" disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+            <button type="button" className="admin-content-view" onClick={onClose} disabled={saving}>{t('Cancel')}</button>
+            <button type="submit" className="admin-content-refresh" disabled={saving}>{saving ? t('Saving…') : t('Save changes')}</button>
           </footer>
         </form>
       </section>
@@ -205,6 +207,7 @@ function AccountEditor({ account, packages, saving, error, onClose, onSave }) {
 }
 
 export function AccountsPage() {
+  const { t } = useLanguage();
   const { user } = useAuth();
   const [accounts, setAccounts] = useState([]);
   const [packages, setPackages] = useState([]);
@@ -307,14 +310,14 @@ export function AccountsPage() {
       label: 'Actions',
       render: (account) => (
         <div className="admin-account-actions">
-          <button type="button" className="admin-content-view" onClick={() => { setError(''); setSelectedAccount(account); }}>Edit</button>
+          <button type="button" className="admin-content-view" onClick={() => { setError(''); setSelectedAccount(account); }}>{t('Edit')}</button>
           <button
             type="button"
             className="button-danger"
             disabled={account.status === 'Deleted' || busyId === account.id}
             onClick={() => deleteAccount(account)}
           >
-            {busyId === account.id ? 'Deleting…' : 'Delete'}
+            {busyId === account.id ? t('Deleting…') : t('Delete')}
           </button>
         </div>
       ),
@@ -325,30 +328,30 @@ export function AccountsPage() {
     <div className="dashboard-container">
       <section className="glass-card admin-accounts-card">
         <SectionHead title="Account management" />
-        <p className="admin-account-description">Manage user and teacher profiles. Delete deactivates sign-in while preserving account history.</p>
+        <p className="admin-account-description">{t('Manage user and teacher profiles. Delete deactivates sign-in while preserving account history.')}</p>
         <div className="admin-accounts-toolbar">
           <input
             type="search"
-            aria-label="Search accounts"
-            placeholder="Search name, username, or email"
+            aria-label={t('Search accounts')}
+            placeholder={t('Search name, username, or email')}
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <select aria-label="Filter account type" value={filter} onChange={(event) => setFilter(event.target.value)}>
-            {['All', 'User', 'Teacher'].map((type) => <option key={type}>{type}</option>)}
+          <select aria-label={t('Filter account type')} value={filter} onChange={(event) => setFilter(event.target.value)}>
+            {['All', 'User', 'Teacher'].map((type) => <option key={type} value={type}>{t(type)}</option>)}
           </select>
           <button type="button" className="admin-content-refresh" onClick={loadAccounts} disabled={loading}>
-            {loading ? 'Loading…' : 'Refresh'}
+            {loading ? t('Loading…') : t('Refresh')}
           </button>
         </div>
-        {error && <p className="teacher-quiz-notice error" role="alert">{error}</p>}
-        {notice && <p className="teacher-quiz-notice success" role="status">{notice}</p>}
+        {error && <p className="teacher-quiz-notice error" role="alert">{t(error)}</p>}
+        {notice && <p className="teacher-quiz-notice success" role="status">{t(notice)}</p>}
         {loading ? (
-          <p className="content-list-state" role="status">Loading accounts…</p>
+          <p className="content-list-state" role="status">{t('Loading accounts…')}</p>
         ) : error && !accounts.length ? null : visibleAccounts.length ? (
           <DataTable columns={columns} rows={visibleAccounts} />
         ) : (
-          <p className="content-list-state">{accounts.length ? 'No accounts match these filters.' : 'No user or teacher accounts found.'}</p>
+          <p className="content-list-state">{t(accounts.length ? 'No accounts match these filters.' : 'No user or teacher accounts found.')}</p>
         )}
       </section>
 

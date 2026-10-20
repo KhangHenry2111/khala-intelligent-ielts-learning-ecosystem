@@ -6,6 +6,7 @@ import { AuthPage } from '../features/auth/AuthPage';
 import { ProfilePage } from '../features/profile/ProfilePage';
 import { PlansPage } from '../features/user/plans/PlansPage';
 import { AvailableQuizPage } from '../features/user/available-quiz/AvailableQuizPage';
+import { TakeQuizPage } from '../features/user/available-quiz/TakeQuizPage';
 import { ClassesPage as UserClassesPage } from '../features/user/classes/ClassesPage';
 import { AiQuizPage } from '../features/user/ai-quiz/AiQuizPage';
 import { LevelTestPage } from '../features/user/level-test/LevelTestPage';
@@ -117,6 +118,7 @@ export function AppRouter() {
       <Route path="/instructor/register" element={<AuthPage mode="register" role="teacher" />} />
 
       <Route path="/:role/dashboard" element={<RoleRoute><LayoutPage><DashboardSwitch /></LayoutPage></RoleRoute>} />
+      <Route path="/user/quiz/:quizId" element={<Protected role="user"><LayoutPage><TakeQuizPage /></LayoutPage></Protected>} />
       <Route path="/:role/profile" element={<RoleRoute><LayoutPage><ProfilePage /></LayoutPage></RoleRoute>} />
       <Route path="/:role/feature/:feature" element={<RoleRoute><FeatureRedirect /></RoleRoute>} />
       <Route path="/:role/:feature" element={<RoleRoute><LayoutPage><FeaturePage /></LayoutPage></RoleRoute>} />

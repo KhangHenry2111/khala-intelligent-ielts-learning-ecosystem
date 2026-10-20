@@ -136,3 +136,17 @@ public class MaterialStatusRequest
 {
     public string Status { get; set; } = "Pending";
 }
+
+public class SubmitQuizAttemptRequest
+{
+    public string QuizId { get; set; } = string.Empty;
+    public int TimeTaken { get; set; }
+    public List<QuizAttemptAnswer> Answers { get; set; } = new();
+}
+
+public class QuizAttemptAnswer
+{
+    public string QuestionId { get; set; } = string.Empty;
+    public string? Answer { get; set; }
+    public int TimeSpent { get; set; }
+}

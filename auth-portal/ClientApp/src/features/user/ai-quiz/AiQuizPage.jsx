@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { aiQuizApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 import { userRank } from '../../../shared/lib/roles';
 import { FeatureShell } from '../../../shared/ui/FeatureShell';
 import { getQuestionTypesForSkill } from '../../teacher/lessons/questionTypes';
@@ -11,6 +12,7 @@ const quotas = { bronze: '8 per month', silver: '60 per month', gold: '250 per m
 
 export function AiQuizPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const [skill, setSkill] = useState('Reading');
   const [questionType, setQuestionType] = useState('MULTIPLE_CHOICE_SINGLE');
   const [difficulty, setDifficulty] = useState('Intermediate');
@@ -93,7 +95,7 @@ export function AiQuizPage() {
         questionType={questionType}
         difficulty={difficulty}
         content={content}
-        status={status}
+        status={t(status)}
         file={file}
         onSkillChange={handleSkillChange}
         onQuestionTypeChange={setQuestionType}

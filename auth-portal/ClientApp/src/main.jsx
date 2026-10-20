@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { AuthProvider } from './shared/auth/AuthContext';
+import { LanguageProvider } from './shared/i18n/LanguageContext';
 import { AppRouter } from './app/AppRouter';
 import './styles.css';
 
@@ -9,7 +10,9 @@ createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <BrowserRouter>
       <AuthProvider>
-        <AppRouter />
+        <LanguageProvider>
+          <AppRouter />
+        </LanguageProvider>
       </AuthProvider>
     </BrowserRouter>
   </React.StrictMode>,

@@ -1,7 +1,9 @@
 import { SectionHead } from '../../../shared/ui/SectionHead';
 import { gradingQueue } from '../data';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 export function GradingPage() {
+  const { t } = useLanguage();
   return (
     <div className="dashboard-container">
       <section className="glass-card">
@@ -11,11 +13,11 @@ export function GradingPage() {
             <div key={item.name + item.task} className="queue-item">
               <div>
                 <h3>{item.name}</h3>
-                <p>{item.task}</p>
+                <p>{t(item.task)}</p>
               </div>
               <div className="queue-meta">
                 <span className="score-pill">{item.score}</span>
-                <small>{item.status}</small>
+                <small>{t(item.status)}</small>
               </div>
             </div>
           ))}

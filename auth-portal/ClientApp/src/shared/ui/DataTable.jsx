@@ -1,11 +1,14 @@
+import { useLanguage } from '../i18n/LanguageContext';
+
 export function DataTable({ columns, rows }) {
+  const { t } = useLanguage();
   return (
     <div className="table-wrap">
       <table className="data-table">
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key}>{column.label}</th>
+              <th key={column.key}>{t(column.label)}</th>
             ))}
           </tr>
         </thead>
@@ -14,7 +17,7 @@ export function DataTable({ columns, rows }) {
             <tr key={row.id || row.name || row.title}>
               {columns.map((column) => (
                 <td key={column.key}>
-                  {column.render ? column.render(row) : row[column.key]}
+                  {column.render ? column.render(row) : t(row[column.key])}
                 </td>
               ))}
             </tr>

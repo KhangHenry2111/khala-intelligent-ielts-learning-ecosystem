@@ -18,26 +18,27 @@ function parseOptions(options) {
 }
 
 export function QuizPreview({ quiz, onExport }) {
+  const { t } = useLanguage();
   if (!quiz) return null;
 
-  const title = quiz.title || quiz.Title || 'AI Generated Quiz';
+  const title = quiz.title || quiz.Title || t('AI Generated Quiz');
   const passage = quiz.passage || quiz.Passage?.Content;
   const transcript = quiz.transcript || quiz.ListeningSection?.Transcript;
   const questions = flattenQuestions(quiz);
 
   return (
     <section className="quiz-result glass-card">
-      <span className="eyebrow">AI quiz</span>
+      <span className="eyebrow">{t('AI quiz')}</span>
       <h2>{title}</h2>
       {passage ? <p className="quiz-passage">{passage}</p> : null}
-      {transcript ? <p className="quiz-passage"><strong>Transcript:</strong> {transcript}</p> : null}
+      {transcript ? <p className="quiz-passage"><strong>{t('Transcript')}:</strong> {transcript}</p> : null}
       {questions.map((question, index) => (
         <article className="quiz-question" key={`${question.Content || question.content}-${index}`}>
           <strong>{index + 1}. {question.content || question.Content}</strong>
           {parseOptions(question.options || question.Options).map((option) => (
             <div key={option}>{option}</div>
           ))}
-          <small>Answer: {question.correctAnswer || question.CorrectAnswer || '—'}</small>
+          <small>{t('Answer')}: {question.correctAnswer || question.CorrectAnswer || '—'}</small>
         </article>
       ))}
       <div className="quiz-exports">
@@ -47,3 +48,4 @@ export function QuizPreview({ quiz, onExport }) {
     </section>
   );
 }
+import { useLanguage } from '../../../../shared/i18n/LanguageContext';

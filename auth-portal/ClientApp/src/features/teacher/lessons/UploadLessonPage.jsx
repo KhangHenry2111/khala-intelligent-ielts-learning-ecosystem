@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { quizApi } from '../../../shared/api';
 import { SectionHead } from '../../../shared/ui/SectionHead';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 import { lessonList as defaultLessons } from '../data';
 import { LISTENING_QUESTION_TYPES, READING_QUESTION_TYPES } from './questionTypes';
 
@@ -37,6 +38,7 @@ function readStoredLessons() {
 }
 
 export function UploadLessonPage() {
+  const { t } = useLanguage();
   const navigate = useNavigate();
   const { user } = useAuth();
   const [title, setTitle] = useState('');
@@ -189,148 +191,148 @@ export function UploadLessonPage() {
     <div className="dashboard-container">
       <section className="glass-card upload-lesson-card">
         <SectionHead title="Upload lesson" actionLabel="Back to lessons" onAction={() => navigate('/teacher/lessons')} />
-        <p className="upload-lesson-intro">Reading and Listening lessons use IELTS question sets. Choose a question type, add each prompt and answer key, then save the lesson and quiz together to SQL.</p>
+        <p className="upload-lesson-intro">{t('Reading and Listening lessons use IELTS question sets. Choose a question type, add each prompt and answer key, then save the lesson and quiz together to SQL.')}</p>
 
         <form className="upload-lesson-form" onSubmit={handleSubmit}>
           <div className="upload-field-group">
-            <label htmlFor="lesson-title">Lesson title</label>
-            <input id="lesson-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="IELTS Reading: Urban farming" required />
+            <label htmlFor="lesson-title">{t('Lesson title')}</label>
+            <input id="lesson-title" value={title} onChange={(event) => setTitle(event.target.value)} placeholder={t('IELTS Reading: Urban farming')} required />
           </div>
 
           <div className="upload-grid">
             <div className="upload-field-group">
-              <label htmlFor="lesson-type">Lesson skill</label>
+              <label htmlFor="lesson-type">{t('Lesson skill')}</label>
               <select id="lesson-type" value={skill} onChange={(event) => changeSkill(event.target.value)}>
-                <option>Writing</option><option>Speaking</option><option>Listening</option><option>Reading</option><option>Vocabulary</option>
+                {['Writing', 'Speaking', 'Listening', 'Reading', 'Vocabulary'].map((value) => <option key={value} value={value}>{t(value)}</option>)}
               </select>
             </div>
             <div className="upload-field-group">
-              <label htmlFor="lesson-level">IELTS difficulty</label>
+              <label htmlFor="lesson-level">{t('IELTS difficulty')}</label>
               <select id="lesson-level" value={level} onChange={(event) => setLevel(event.target.value)}>
-                <option>Beginner</option><option>Intermediate</option><option>Advanced</option>
+                <option value="Beginner">{t('Beginner')}</option><option value="Intermediate">{t('Intermediate')}</option><option value="Advanced">{t('Advanced')}</option>
               </select>
             </div>
           </div>
 
           <div className="upload-field-group">
-            <label htmlFor="lesson-description">Description / learning objective</label>
-            <textarea id="lesson-description" rows="3" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Describe the target skills and learning objectives..." />
+            <label htmlFor="lesson-description">{t('Description / learning objective')}</label>
+            <textarea id="lesson-description" rows="3" value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t('Describe the target skills and learning objectives...')} />
           </div>
 
           <div className="upload-grid">
             <div className="upload-field-group">
-              <label htmlFor="lesson-topic">Topic</label>
-              <input id="lesson-topic" value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Environment, science, education..." />
+              <label htmlFor="lesson-topic">{t('Topic')}</label>
+              <input id="lesson-topic" value={topic} onChange={(event) => setTopic(event.target.value)} placeholder={t('Environment, science, education...')} />
             </div>
             <div className="upload-field-group">
-              <label htmlFor="lesson-access">Access</label>
+              <label htmlFor="lesson-access">{t('Access')}</label>
               <select id="lesson-access" value={isFree ? 'Free' : 'Paid'} onChange={(event) => setIsFree(event.target.value === 'Free')}>
-                <option>Free</option><option>Paid</option>
+                <option value="Free">{t('Free')}</option><option value="Paid">{t('Paid')}</option>
               </select>
             </div>
           </div>
-          {!isFree && <div className="upload-field-group"><label htmlFor="lesson-price">Price</label><input id="lesson-price" type="number" min="0" step="1000" value={price} onChange={(event) => setPrice(event.target.value)} /></div>}
+          {!isFree && <div className="upload-field-group"><label htmlFor="lesson-price">{t('Price')}</label><input id="lesson-price" type="number" min="0" step="1000" value={price} onChange={(event) => setPrice(event.target.value)} /></div>}
 
           {(skill === 'Reading' || skill === 'Listening') && <>
             <div className="upload-field-group">
-              <label htmlFor="question-format">IELTS question type</label>
+              <label htmlFor="question-format">{t('IELTS question type')}</label>
               <select id="question-format" value={selectedFormat} onChange={(event) => setFormat(event.target.value)}>
-                {formats.map(([code, label]) => <option value={code} key={code}>{label}</option>)}
+                {formats.map(([code, label]) => <option value={code} key={code}>{t(label)}</option>)}
               </select>
             </div>
 
             {skill === 'Reading' ? (
               <div className="upload-field-group">
-                <label htmlFor="reading-passage">Reading passage</label>
-                <textarea id="reading-passage" rows="8" value={passage} onChange={(event) => setPassage(event.target.value)} placeholder="Paste the passage students will read..." required />
+                <label htmlFor="reading-passage">{t('Reading passage')}</label>
+                <textarea id="reading-passage" rows="8" value={passage} onChange={(event) => setPassage(event.target.value)} placeholder={t('Paste the passage students will read...')} required />
               </div>
             ) : <>
               <div className="upload-field-group">
-                <label htmlFor="listening-audio-url">Listening audio URL</label>
+                <label htmlFor="listening-audio-url">{t('Listening audio URL')}</label>
                 <input id="listening-audio-url" type="url" value={audioUrl} onChange={(event) => setAudioUrl(event.target.value)} placeholder="https://..." required />
-                <small>Audio is stored as a URL; the audio file itself should be hosted at this address.</small>
+                <small>{t('Audio is stored as a URL; the audio file itself should be hosted at this address.')}</small>
               </div>
               <div className="upload-field-group">
-                <label htmlFor="listening-transcript">Transcript (optional)</label>
-                <textarea id="listening-transcript" rows="5" value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder="Paste the listening transcript for teacher reference..." />
+                <label htmlFor="listening-transcript">{t('Transcript (optional)')}</label>
+                <textarea id="listening-transcript" rows="5" value={transcript} onChange={(event) => setTranscript(event.target.value)} placeholder={t('Paste the listening transcript for teacher reference...')} />
               </div>
             </>}
 
             {matchingTypes.has(selectedFormat) && <div className="upload-field-group">
-              <label htmlFor="matching-options">Shared headings / features / labels (one per line)</label>
+              <label htmlFor="matching-options">{t('Shared headings / features / labels (one per line)')}</label>
               <textarea id="matching-options" rows="5" value={sharedOptions} onChange={(event) => setSharedOptions(event.target.value)} />
-              <small>Use a unique label at the start of every line, such as “i. A new approach”.</small>
+              <small>{t('Use a unique label at the start of every line, such as “i. A new approach”.')}</small>
             </div>}
 
             {(selectedFormat === 'DIAGRAM_LABEL_COMPLETION' || selectedFormat === 'MAP_PLAN_LABELING') && <div className="upload-field-group">
-              <label htmlFor="diagram-reference">{selectedFormat === 'MAP_PLAN_LABELING' ? 'Map / plan image URL' : 'Diagram reference URL'} (optional)</label>
+              <label htmlFor="diagram-reference">{t(selectedFormat === 'MAP_PLAN_LABELING' ? 'Map / plan image URL' : 'Diagram reference URL')} {t('(optional)')}</label>
               <input id="diagram-reference" type="url" value={visualReference} onChange={(event) => setVisualReference(event.target.value)} placeholder="https://..." />
-              <small>Add the visual reference here and the label or location in each question prompt.</small>
+              <small>{t('Add the visual reference here and the label or location in each question prompt.')}</small>
             </div>}
 
             {selectedFormat === 'MULTIPLE_CHOICE_MULTI' && <div className="upload-field-group">
-              <label htmlFor="multi-answer-count">Correct answers per question</label>
-              <select id="multi-answer-count" value={multiAnswerCount} onChange={(event) => setMultiAnswerCount(Number(event.target.value))}><option value={2}>Choose TWO answers</option><option value={3}>Choose THREE answers</option></select>
+              <label htmlFor="multi-answer-count">{t('Correct answers per question')}</label>
+              <select id="multi-answer-count" value={multiAnswerCount} onChange={(event) => setMultiAnswerCount(Number(event.target.value))}><option value={2}>{t('Choose TWO answers')}</option><option value={3}>{t('Choose THREE answers')}</option></select>
             </div>}
 
             {completionTypes.has(selectedFormat) && <div className="upload-field-group">
-              <label htmlFor="lesson-word-limit">IELTS answer word limit</label>
+              <label htmlFor="lesson-word-limit">{t('IELTS answer word limit')}</label>
               <select id="lesson-word-limit" value={wordLimit} onChange={(event) => setWordLimit(event.target.value)}>
                 <option>NO MORE THAN ONE WORD</option><option>NO MORE THAN TWO WORDS</option><option>NO MORE THAN THREE WORDS</option><option>ONE WORD AND/OR A NUMBER</option>
               </select>
             </div>}
 
             <div className="upload-field-group">
-              <label htmlFor="lesson-question-count">Number of questions</label>
+              <label htmlFor="lesson-question-count">{t('Number of questions')}</label>
               <input id="lesson-question-count" type="number" min="1" max="40" value={questionCount} onChange={(event) => changeQuestionCount(event.target.value)} />
             </div>
 
             <div className="upload-question-list">
               {questions.map((question, index) => <fieldset className="upload-question-card" key={index}>
-                <legend>Question {index + 1}</legend>
+                <legend>{t('Question')} {index + 1}</legend>
                 <div className="upload-field-group">
-                  <label htmlFor={`q-content-${index}`}>{matchingTypes.has(selectedFormat) ? 'Prompt / paragraph label' : 'Question'}</label>
-                  <textarea id={`q-content-${index}`} rows="2" value={question.content} onChange={(event) => updateQuestion(index, 'content', event.target.value)} required placeholder={selectedFormat === 'MATCHING_HEADINGS' ? 'Paragraph A' : 'Enter a clear IELTS-style question...'} />
+                  <label htmlFor={`q-content-${index}`}>{t(matchingTypes.has(selectedFormat) ? 'Prompt / paragraph label' : 'Question')}</label>
+                  <textarea id={`q-content-${index}`} rows="2" value={question.content} onChange={(event) => updateQuestion(index, 'content', event.target.value)} required placeholder={t(selectedFormat === 'MATCHING_HEADINGS' ? 'Paragraph A' : 'Enter a clear IELTS-style question...')} />
                 </div>
 
                 {selectedFormat.startsWith('MULTIPLE_CHOICE') && <div className="upload-grid upload-option-grid">
                   {question.options.map((option, optionIndex) => <div className="upload-field-group" key={optionIndex}>
-                    <label htmlFor={`q-${index}-option-${optionIndex}`}>Option {String.fromCharCode(65 + optionIndex)}</label>
+                    <label htmlFor={`q-${index}-option-${optionIndex}`}>{t('Option')} {String.fromCharCode(65 + optionIndex)}</label>
                     <input id={`q-${index}-option-${optionIndex}`} value={option} onChange={(event) => updateQuestion(index, 'options', question.options.map((item, i) => i === optionIndex ? event.target.value : item))} required />
                   </div>)}
                 </div>}
 
                 <div className="upload-grid">
                   <div className="upload-field-group">
-                    <label htmlFor={`q-answer-${index}`}>Correct answer</label>
+                    <label htmlFor={`q-answer-${index}`}>{t('Correct answer')}</label>
                     {fixedAnswerOptions[selectedFormat] ? <select id={`q-answer-${index}`} value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} required>
-                      <option value="">Choose answer</option>{fixedAnswerOptions[selectedFormat].map((item) => <option key={item}>{item}</option>)}
+                      <option value="">{t('Choose answer')}</option>{fixedAnswerOptions[selectedFormat].map((item) => <option key={item} value={item}>{t(item)}</option>)}
                     </select> : selectedFormat.startsWith('MULTIPLE_CHOICE') ? <select id={`q-answer-${index}`} multiple={selectedFormat === 'MULTIPLE_CHOICE_MULTI'} size={selectedFormat === 'MULTIPLE_CHOICE_MULTI' ? 4 : undefined} value={selectedFormat === 'MULTIPLE_CHOICE_MULTI' ? (question.correctAnswer ? question.correctAnswer.split(',') : []) : question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', Array.from(event.target.selectedOptions, (item) => item.value).join(','))} required>
                       {['A', 'B', 'C', 'D'].map((item) => <option key={item} value={item}>{item}{selectedFormat === 'MULTIPLE_CHOICE_MULTI' ? ' (select all that apply)' : ''}</option>)}
                     </select> : matchingTypes.has(selectedFormat) ? <select id={`q-answer-${index}`} value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} required>
-                      <option value="">Choose a match</option>{sharedOptions.split('\n').map((item) => item.trim()).filter(Boolean).map((item) => <option key={item} value={item.split(/[.\s-]/)[0]}>{item}</option>)}
-                    </select> : <input id={`q-answer-${index}`} value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} placeholder="Exact answer" required />}
+                      <option value="">{t('Choose a match')}</option>{sharedOptions.split('\n').map((item) => item.trim()).filter(Boolean).map((item) => <option key={item} value={item.split(/[.\s-]/)[0]}>{item}</option>)}
+                    </select> : <input id={`q-answer-${index}`} value={question.correctAnswer} onChange={(event) => updateQuestion(index, 'correctAnswer', event.target.value)} placeholder={t('Exact answer')} required />}
                   </div>
                   <div className="upload-field-group">
-                    <label htmlFor={`q-difficulty-${index}`}>Question difficulty</label>
+                    <label htmlFor={`q-difficulty-${index}`}>{t('Question difficulty')}</label>
                     <select id={`q-difficulty-${index}`} value={question.difficulty} onChange={(event) => updateQuestion(index, 'difficulty', event.target.value)}>
-                      <option>Beginner</option><option>Intermediate</option><option>Advanced</option>
+                      <option value="Beginner">{t('Beginner')}</option><option value="Intermediate">{t('Intermediate')}</option><option value="Advanced">{t('Advanced')}</option>
                     </select>
                   </div>
                 </div>
                 <div className="upload-field-group">
-                  <label htmlFor={`q-explanation-${index}`}>Answer explanation</label>
-                  <textarea id={`q-explanation-${index}`} rows="2" value={question.explanation} onChange={(event) => updateQuestion(index, 'explanation', event.target.value)} placeholder="Explain why the answer is correct (optional)" />
+                  <label htmlFor={`q-explanation-${index}`}>{t('Answer explanation')}</label>
+                  <textarea id={`q-explanation-${index}`} rows="2" value={question.explanation} onChange={(event) => updateQuestion(index, 'explanation', event.target.value)} placeholder={t('Explain why the answer is correct (optional)')} />
                 </div>
               </fieldset>)}
             </div>
           </>}
 
-          {notice && <p className={`teacher-quiz-notice ${notice.type}`} role="status">{notice.text}</p>}
+          {notice && <p className={`teacher-quiz-notice ${notice.type}`} role="status">{t(notice.text)}</p>}
           <div className="upload-actions">
-            <button type="button" className="secondary-btn" onClick={() => navigate('/teacher/lessons')}>Cancel</button>
+            <button type="button" className="secondary-btn" onClick={() => navigate('/teacher/lessons')}>{t('Cancel')}</button>
             <button type="submit" className="feature-action upload-submit" disabled={busy}>
-              {busy ? 'Saving to database…' : skill === 'Reading' || skill === 'Listening' ? 'Save lesson and quiz' : 'Upload lesson'} <span>→</span>
+              {busy ? t('Saving to database…') : skill === 'Reading' || skill === 'Listening' ? t('Save lesson and quiz') : t('Upload lesson')} <span>→</span>
             </button>
           </div>
         </form>

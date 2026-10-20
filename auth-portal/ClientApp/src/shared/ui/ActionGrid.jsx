@@ -1,6 +1,8 @@
 import { Link } from 'react-router-dom';
+import { useLanguage } from '../i18n/LanguageContext';
 
 export function ActionGrid({ actions, className = '' }) {
+  const { t } = useLanguage();
   return (
     <div className={`grid-2 ${className}`.trim()}>
       {actions.map((action) => {
@@ -8,8 +10,8 @@ export function ActionGrid({ actions, className = '' }) {
           <>
             <span className="icon">✦</span>
             <div>
-              <h3>{action.title}</h3>
-              <p>{action.description}</p>
+              <h3>{t(action.title)}</h3>
+              <p>{t(action.description)}</p>
             </div>
           </>
         );

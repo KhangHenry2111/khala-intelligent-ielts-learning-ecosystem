@@ -6,9 +6,11 @@ import { ActionGrid } from '../../../shared/ui/ActionGrid';
 import { SectionHead } from '../../../shared/ui/SectionHead';
 import { WorkspaceHero } from '../../../shared/ui/WorkspaceHero';
 import { teacherQuickActions } from '../data';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 export function TeacherDashboardPage() {
   const { user } = useAuth();
+  const { t } = useLanguage();
   const name = displayName(user, 'Teacher');
   const [pendingReviewCount, setPendingReviewCount] = useState(0);
 
@@ -48,27 +50,27 @@ export function TeacherDashboardPage() {
             <div className="teacher-avatar">{(name || 'T')[0].toUpperCase()}</div>
             <div className="teacher-profile-info">
               <h3>{name}</h3>
-              <p>IELTS Instructor · Speaking & Writing Specialist</p>
+              <p>{t('IELTS Instructor · Speaking & Writing Specialist')}</p>
               <div className="tag-row">
                 <span className="tag">IELTS 8.5</span>
                 <span className="tag">8+ years experience</span>
-                <span className="tag">Cambridge Trainer</span>
+                <span className="tag">{t('Cambridge Trainer')}</span>
               </div>
             </div>
           </div>
           <div className="teacher-bio-block">
             <p>
-              Build personalized learning plans, design practical lesson content, and guide students through international IELTS scoring standards.
+              {t('Build personalized learning plans, design practical lesson content, and guide students through international IELTS scoring standards.')}
             </p>
           </div>
           <div className="teacher-certificates">
             <div>
               <span className="label">Certificates</span>
-              <strong>CELTA · TESOL · IELTS Trainer</strong>
+              <strong>{t('CELTA · TESOL · IELTS Trainer')}</strong>
             </div>
             <div>
               <span className="label">Profile summary</span>
-              <strong>Gold-tier students · 1:1 feedback · Speaking/Writing coach</strong>
+              <strong>{t('Gold-tier students · 1:1 feedback · Speaking/Writing coach')}</strong>
             </div>
           </div>
         </section>

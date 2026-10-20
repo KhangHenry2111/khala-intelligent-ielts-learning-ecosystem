@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { authApi } from '../../shared/api';
 import { useAuth } from '../../shared/auth/AuthContext';
+import { LanguageSwitcher, useLanguage } from '../../shared/i18n/LanguageContext';
 import { normalizeRole } from '../../shared/lib/roles';
 import { AuthBrandPanel } from './components/AuthBrandPanel';
 import { AuthForm } from './components/AuthForm';
@@ -9,6 +10,7 @@ import { AuthForm } from './components/AuthForm';
 const labels = { user: 'User', teacher: 'Teacher', admin: 'Admin' };
 
 export function AuthPage({ mode, role: fixedRole }) {
+  const { t } = useLanguage();
   const { role: routeRole } = useParams();
   const role = normalizeRole(fixedRole || routeRole || 'user');
   const title = labels[role] || 'Student';
@@ -27,7 +29,7 @@ export function AuthPage({ mode, role: fixedRole }) {
     event.preventDefault();
     setError('');
     if (isRegister && form.password !== form.confirmPassword) {
-      setError('Passwords do not match.');
+      setError(t('Passwords do not match.'));
       return;
     }
     setBusy(true);
@@ -40,7 +42,7 @@ export function AuthPage({ mode, role: fixedRole }) {
       }
       const result = isRegister ? await authApi.register(payload) : await authApi.login(payload);
       if (isRegister) {
-        navigate(`/${role}/login`, { state: { message: 'Registration successful. You can sign in now.' } });
+        navigate(`/${role}/login`, { state: { message: t('Registration successful. You can sign in now.') } });
       } else {
         signIn({ ...result.user, accessToken: result.token });
         navigate(`/${role}/dashboard`);
@@ -54,12 +56,13 @@ export function AuthPage({ mode, role: fixedRole }) {
 
   return (
     <main className="auth-shell">
-      <AuthBrandPanel title={title} />
+      <AuthBrandPanel title={t(title)} />
       <section className="auth-panel">
-        <nav>
-          <Link to="/user/login">User</Link>
-          <Link to="/teacher/login">Teacher</Link>
-          <Link to="/admin/login">Admin</Link>
+        <nav className="auth-role-nav">
+          <LanguageSwitcher />
+          <Link to="/user/login">{t('User')}</Link>
+          <Link to="/teacher/login">{t('Teacher')}</Link>
+          <Link to="/admin/login">{t('Admin')}</Link>
         </nav>
         <AuthForm
           role={role}

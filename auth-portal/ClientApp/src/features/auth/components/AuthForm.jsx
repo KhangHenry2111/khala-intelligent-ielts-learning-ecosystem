@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 function Field({ name, label, type = 'text', required = true, value, onChange }) {
+  const { t } = useLanguage();
   return (
     <label>
-      {label}
+      {t(label)}
       <input name={name} type={type} value={value || ''} onChange={onChange} required={required} />
     </label>
   );
@@ -19,13 +21,17 @@ export function AuthForm({
   onChange,
   onSubmit,
 }) {
-  const accountTitle = role === 'teacher' ? 'a teacher' : `a ${title.toLowerCase()}`;
+  const { t } = useLanguage();
+  const accountLabel = role === 'teacher' ? 'teacher' : title.toLowerCase();
+  const heading = isRegister
+    ? t('Create an account for') + ` ${t(accountLabel)}`
+    : `${t('Welcome back')}, ${t(title)}.`;
 
   return (
     <form onSubmit={onSubmit} className="auth-form">
-      <span className="form-kicker">{isRegister ? 'Begin your progress' : `${title} workspace`}</span>
-      <h2>{isRegister ? `Create ${accountTitle} account` : `Welcome back, ${title}.`}</h2>
-      <p className="form-hint">{isRegister ? 'Add your details to get started.' : 'Sign in to continue your learning journey.'}</p>
+      <span className="form-kicker">{isRegister ? t('Begin your progress') : `${t(title)} ${t('workspace')}`}</span>
+      <h2>{heading}</h2>
+      <p className="form-hint">{isRegister ? t('Add your details to get started.') : t('Sign in to continue your learning journey.')}</p>
 
       {isRegister && role === 'teacher' && (
         <div className="form-grid">
@@ -59,15 +65,15 @@ export function AuthForm({
           </div>
         </>
       )}
-      {error && <p className="form-error" role="alert">{error}</p>}
+      {error && <p className="form-error" role="alert">{t(error)}</p>}
       <button disabled={busy}>
-        {busy ? 'Processing...' : isRegister ? `Create ${title} account` : `Sign in as ${title}`} <span>→</span>
+        {busy ? t('Processing...') : isRegister ? `${t('Create account')} ${t('for')} ${t(accountLabel)}` : `${t('Sign in as')} ${t(accountLabel)}`} <span>→</span>
       </button>
       {role !== 'admin' && (
         <p className="auth-switch">
-          {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
+          {isRegister ? t('Already have an account?') : t("Don't have an account?")}{' '}
           <Link to={`/${role}/${isRegister ? 'login' : 'register'}`}>
-            {isRegister ? 'Sign in' : `Register as ${title}`}
+            {isRegister ? t('Sign in') : `${t('Register as')} ${t(accountLabel)}`}
           </Link>
         </p>
       )}

@@ -625,6 +625,305 @@ public class QuizController : ControllerBase
         }
     }
 
+    [HttpGet("play/{quizId}")]
+    public IActionResult GetQuizForPractice(string quizId)
+    {
+        var session = GetCurrentSession();
+        if (session == null || !IsLearner(session.UserType) || !Guid.TryParse(session.Id, out var userId))
+            return Unauthorized(new { success = false, message = "Sign in as a learner to take a quiz." });
+        if (!Guid.TryParse(quizId, out var parsedQuizId))
+            return BadRequest(new { success = false, message = "Select a valid quiz." });
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+
+            object? quiz;
+            using (var cmd = new SqlCommand(@"
+                SELECT q.QuizID, q.Title, q.Skill, q.Level,
+                       rp.Title AS PassageTitle, rp.Content AS PassageContent,
+                       la.AudioURL, la.Transcript
+                FROM Quiz q
+                LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
+                LEFT JOIN ListeningAudio la ON la.AudioID = q.AudioID
+                OUTER APPLY (
+                    SELECT TOP 1 m.MaterialID, m.IsFree
+                    FROM Material m
+                    WHERE m.QuizID = q.QuizID AND m.Status = 'Approved'
+                    ORDER BY m.CreatedAt DESC
+                ) material
+                WHERE q.QuizID = @QuizID
+                    AND (q.Status = 'Approved' OR material.MaterialID IS NOT NULL)
+                    AND (material.MaterialID IS NULL OR material.IsFree = 1 OR EXISTS (
+                        SELECT 1 FROM MaterialAccess access
+                        WHERE access.MaterialID = material.MaterialID
+                            AND access.UserID = @UserID
+                            AND (access.ExpiresAt IS NULL OR access.ExpiresAt > GETDATE())
+                    ))", conn))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = parsedQuizId });
+                cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+                using var reader = cmd.ExecuteReader();
+                if (!reader.Read()) return NotFound(new { success = false, message = "This quiz is unavailable or requires a purchase." });
+                quiz = new
+                {
+                    quizId = reader.GetGuid(0).ToString(),
+                    title = reader.GetString(1),
+                    skill = reader.IsDBNull(2) ? "Reading" : reader.GetString(2),
+                    level = reader.IsDBNull(3) ? "All levels" : reader.GetString(3),
+                    passageTitle = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    passageContent = reader.IsDBNull(5) ? null : reader.GetString(5),
+                    audioUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
+                    transcript = reader.IsDBNull(7) ? null : reader.GetString(7)
+                };
+            }
+
+            var questions = new List<object>();
+            using (var cmd = new SqlCommand(@"
+                SELECT question.QuestionID, question.Content, question.Options, question.OrderIndex,
+                       COALESCE(question.QuestionType, type.Code) AS QuestionType,
+                       questionGroup.Instruction, questionGroup.SharedOptions, questionGroup.WordLimit
+                FROM Question question
+                LEFT JOIN QuestionTypeCatalog type ON type.QuestionTypeID = question.QuestionTypeID
+                LEFT JOIN QuestionGroup questionGroup ON questionGroup.GroupID = question.GroupID
+                WHERE question.QuizID = @QuizID
+                ORDER BY ISNULL(questionGroup.OrderIndex, question.OrderIndex), question.OrderIndex", conn))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = parsedQuizId });
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    questions.Add(new
+                    {
+                        questionId = reader.GetGuid(0).ToString(),
+                        content = reader.GetString(1),
+                        options = reader.IsDBNull(2) ? null : reader.GetString(2),
+                        orderIndex = reader.GetInt32(3),
+                        questionType = reader.IsDBNull(4) ? "SHORT_ANSWER" : reader.GetString(4),
+                        instruction = reader.IsDBNull(5) ? null : reader.GetString(5),
+                        sharedOptions = reader.IsDBNull(6) ? null : reader.GetString(6),
+                        wordLimit = reader.IsDBNull(7) ? null : reader.GetString(7)
+                    });
+                }
+            }
+
+            if (questions.Count == 0)
+                return NotFound(new { success = false, message = "This quiz does not contain any questions." });
+            return Ok(new { success = true, quiz, questions });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpPost("attempt")]
+    public IActionResult SubmitQuizAttempt([FromBody] SubmitQuizAttemptRequest request)
+    {
+        var session = GetCurrentSession();
+        if (session == null || !IsLearner(session.UserType) || !Guid.TryParse(session.Id, out var userId))
+            return Unauthorized(new { success = false, message = "Sign in as a learner to submit a quiz." });
+        if (request == null || !Guid.TryParse(request.QuizId, out var quizId))
+            return BadRequest(new { success = false, message = "Select a valid quiz." });
+
+        var answersByQuestion = new Dictionary<Guid, QuizAttemptAnswer>();
+        foreach (var answer in request.Answers ?? new List<QuizAttemptAnswer>())
+        {
+            if (!Guid.TryParse(answer.QuestionId, out var questionId) || !answersByQuestion.TryAdd(questionId, answer))
+                return BadRequest(new { success = false, message = "The submitted answers contain an invalid or duplicate question." });
+        }
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction();
+
+            var expectedAnswers = new List<(Guid QuestionId, string? CorrectAnswer, string? Explanation)>();
+            using (var cmd = new SqlCommand(@"
+                SELECT question.QuestionID, question.CorrectAnswer, question.Explanation
+                FROM Question question
+                JOIN Quiz quiz ON quiz.QuizID = question.QuizID
+                OUTER APPLY (
+                    SELECT TOP 1 m.MaterialID, m.IsFree
+                    FROM Material m
+                    WHERE m.QuizID = quiz.QuizID AND m.Status = 'Approved'
+                    ORDER BY m.CreatedAt DESC
+                ) material
+                WHERE quiz.QuizID = @QuizID
+                    AND (quiz.Status = 'Approved' OR material.MaterialID IS NOT NULL)
+                    AND (material.MaterialID IS NULL OR material.IsFree = 1 OR EXISTS (
+                        SELECT 1 FROM MaterialAccess access
+                        WHERE access.MaterialID = material.MaterialID
+                            AND access.UserID = @UserID
+                            AND (access.ExpiresAt IS NULL OR access.ExpiresAt > GETDATE())
+                    ))
+                ORDER BY question.OrderIndex", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+                using var reader = cmd.ExecuteReader();
+                while (reader.Read())
+                    expectedAnswers.Add((reader.GetGuid(0), reader.IsDBNull(1) ? null : reader.GetString(1), reader.IsDBNull(2) ? null : reader.GetString(2)));
+            }
+
+            if (expectedAnswers.Count == 0)
+            {
+                tx.Rollback();
+                return NotFound(new { success = false, message = "This quiz is unavailable or has no questions." });
+            }
+            foreach (var answerId in answersByQuestion.Keys)
+            {
+                if (!expectedAnswers.Exists(question => question.QuestionId == answerId))
+                {
+                    tx.Rollback();
+                    return BadRequest(new { success = false, message = "An answer does not belong to this quiz." });
+                }
+            }
+
+            var attemptId = Guid.NewGuid();
+            var timeTaken = Math.Clamp(request.TimeTaken, 0, 86400);
+            var results = new List<object>();
+            var correctCount = 0;
+            foreach (var question in expectedAnswers)
+            {
+                answersByQuestion.TryGetValue(question.QuestionId, out var submitted);
+                var userAnswer = submitted?.Answer?.Trim();
+                var isCorrect = !string.IsNullOrWhiteSpace(question.CorrectAnswer)
+                    && string.Equals(NormalizeQuizAnswer(userAnswer), NormalizeQuizAnswer(question.CorrectAnswer), StringComparison.OrdinalIgnoreCase);
+                if (isCorrect) correctCount++;
+                results.Add(new
+                {
+                    questionId = question.QuestionId.ToString(),
+                    answer = userAnswer,
+                    correctAnswer = question.CorrectAnswer,
+                    isCorrect,
+                    explanation = question.Explanation
+                });
+            }
+
+            var score = correctCount * 100d / expectedAnswers.Count;
+            using (var cmd = new SqlCommand(@"
+                INSERT INTO QuizAttempt (AttemptID, UserID, QuizID, Score, TimeTaken, StartedAt, SubmittedAt, Status)
+                VALUES (@AttemptID, @UserID, @QuizID, @Score, @TimeTaken, DATEADD(SECOND, -@TimeTaken, GETDATE()), GETDATE(), 'Submitted')", conn, tx))
+            {
+                cmd.Parameters.Add(new SqlParameter("@AttemptID", SqlDbType.UniqueIdentifier) { Value = attemptId });
+                cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+                cmd.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+                cmd.Parameters.Add(new SqlParameter("@Score", SqlDbType.Float) { Value = score });
+                cmd.Parameters.Add(new SqlParameter("@TimeTaken", SqlDbType.Int) { Value = timeTaken });
+                cmd.ExecuteNonQuery();
+            }
+            foreach (var question in expectedAnswers)
+            {
+                answersByQuestion.TryGetValue(question.QuestionId, out var submitted);
+                var userAnswer = submitted?.Answer?.Trim();
+                var isCorrect = !string.IsNullOrWhiteSpace(question.CorrectAnswer)
+                    && string.Equals(NormalizeQuizAnswer(userAnswer), NormalizeQuizAnswer(question.CorrectAnswer), StringComparison.OrdinalIgnoreCase);
+                using var cmd = new SqlCommand(@"
+                    INSERT INTO AnswerRecord (AnswerID, AttemptID, QuestionID, UserAnswer, IsCorrect, TimeSpent)
+                    VALUES (@AnswerID, @AttemptID, @QuestionID, @UserAnswer, @IsCorrect, @TimeSpent)", conn, tx);
+                cmd.Parameters.Add(new SqlParameter("@AnswerID", SqlDbType.UniqueIdentifier) { Value = Guid.NewGuid() });
+                cmd.Parameters.Add(new SqlParameter("@AttemptID", SqlDbType.UniqueIdentifier) { Value = attemptId });
+                cmd.Parameters.Add(new SqlParameter("@QuestionID", SqlDbType.UniqueIdentifier) { Value = question.QuestionId });
+                cmd.Parameters.Add(new SqlParameter("@UserAnswer", SqlDbType.NVarChar, 500) { Value = string.IsNullOrWhiteSpace(userAnswer) ? DBNull.Value : userAnswer });
+                cmd.Parameters.Add(new SqlParameter("@IsCorrect", SqlDbType.Bit) { Value = isCorrect });
+                cmd.Parameters.Add(new SqlParameter("@TimeSpent", SqlDbType.Int) { Value = Math.Clamp(submitted?.TimeSpent ?? 0, 0, timeTaken) });
+                cmd.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+            return Ok(new
+            {
+                success = true,
+                attemptId = attemptId.ToString(),
+                score,
+                correctCount,
+                totalQuestions = expectedAnswers.Count,
+                timeTaken,
+                results
+            });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpGet("attempts")]
+    public IActionResult GetMyQuizAttempts()
+    {
+        var session = GetCurrentSession();
+        if (session == null || !IsLearner(session.UserType) || !Guid.TryParse(session.Id, out var userId))
+            return Unauthorized(new { success = false, message = "Sign in as a learner to view quiz results." });
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var cmd = new SqlCommand(@"
+                SELECT attempt.AttemptID, attempt.QuizID, quiz.Title, quiz.Skill, attempt.Score,
+                       attempt.TimeTaken, attempt.SubmittedAt, attempt.Status,
+                       (SELECT COUNT(*) FROM AnswerRecord answer WHERE answer.AttemptID = attempt.AttemptID) AS AnswerCount,
+                       (SELECT COUNT(*) FROM AnswerRecord answer WHERE answer.AttemptID = attempt.AttemptID AND answer.IsCorrect = 1) AS CorrectCount
+                FROM QuizAttempt attempt
+                JOIN Quiz quiz ON quiz.QuizID = attempt.QuizID
+                WHERE attempt.UserID = @UserID
+                ORDER BY attempt.SubmittedAt DESC", conn);
+            cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+            using var reader = cmd.ExecuteReader();
+            var items = new List<object>();
+            while (reader.Read())
+            {
+                items.Add(new
+                {
+                    attemptId = reader.GetGuid(0).ToString(),
+                    quizId = reader.GetGuid(1).ToString(),
+                    title = reader.GetString(2),
+                    skill = reader.IsDBNull(3) ? "Reading" : reader.GetString(3),
+                    score = reader.IsDBNull(4) ? 0 : reader.GetDouble(4),
+                    timeTaken = reader.IsDBNull(5) ? 0 : reader.GetInt32(5),
+                    submittedAt = reader.IsDBNull(6) ? (DateTime?)null : reader.GetDateTime(6),
+                    status = reader.GetString(7),
+                    totalQuestions = reader.GetInt32(8),
+                    correctCount = reader.GetInt32(9)
+                });
+            }
+            return Ok(new { success = true, items });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    private static bool IsLearner(string userType) =>
+        string.Equals(userType, "User", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(userType, "Student", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeQuizAnswer(string? answer)
+    {
+        var value = (answer ?? string.Empty).Trim();
+        if (value.Contains(','))
+        {
+            var choices = value.Split(',');
+            for (var index = 0; index < choices.Length; index++) choices[index] = choices[index].Trim();
+            Array.Sort(choices, StringComparer.OrdinalIgnoreCase);
+            return string.Join(",", choices);
+        }
+        return string.Join(" ", value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+    }
+
+    private static string NormalizePackageName(string? name)
+    {
+        var normalized = (name ?? string.Empty).Trim().ToLowerInvariant();
+        if (normalized is "bronze" or "đồng" or "dong") return "bronze";
+        if (normalized is "silver" or "bạc" or "bac") return "silver";
+        if (normalized is "gold" or "vàng" or "vang") return "gold";
+        return string.Empty;
+    }
+
     [HttpGet("packages")]
     public IActionResult GetPackages()
     {
@@ -633,10 +932,23 @@ public class QuizController : ControllerBase
             using var conn = GetConnection();
             conn.Open();
             const string sql = @"
+                WITH RankedPackages AS (
+                    SELECT PackageID, PackageName, Price, DurationMonths, AIQuizLimit, LevelTestLimit, UploadLimitMB,
+                           KnowledgeBaseAccess, HasSpeakingAI, HasSpeakingTeacher, HasWritingAI, HasWritingTeacher, WritingAILimited,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY Price, DurationMonths, AIQuizLimit, LevelTestLimit, UploadLimitMB,
+                                            KnowledgeBaseAccess, HasSpeakingAI, HasSpeakingTeacher, HasWritingAI,
+                                            HasWritingTeacher, WritingAILimited
+                               ORDER BY CASE WHEN PackageName IN (N'Đồng', N'Bạc', N'Vàng', N'Bronze', N'Silver', N'Gold') THEN 0 ELSE 1 END,
+                                        PackageID
+                           ) AS DuplicateRank
+                    FROM Package
+                    WHERE IsActive = 1
+                )
                 SELECT PackageID, PackageName, Price, DurationMonths, AIQuizLimit, LevelTestLimit, UploadLimitMB,
                        KnowledgeBaseAccess, HasSpeakingAI, HasSpeakingTeacher, HasWritingAI, HasWritingTeacher, WritingAILimited
-                FROM Package
-                WHERE IsActive = 1
+                FROM RankedPackages
+                WHERE DuplicateRank = 1
                 ORDER BY Price, PackageName";
             using var cmd = new SqlCommand(sql, conn);
             using var reader = cmd.ExecuteReader();
@@ -647,6 +959,9 @@ public class QuizController : ControllerBase
                 {
                     packageId = reader.GetGuid(0).ToString(),
                     name = reader.GetString(1),
+                    tier = NormalizePackageName(reader.GetString(1)) is { Length: > 0 } tier ? tier
+                        : reader.GetInt32(4) <= 8 ? "bronze"
+                        : reader.GetInt32(4) <= 60 ? "silver" : "gold",
                     price = reader.GetDecimal(2),
                     durationMonths = reader.GetInt32(3),
                     aiQuizLimit = reader.GetInt32(4),

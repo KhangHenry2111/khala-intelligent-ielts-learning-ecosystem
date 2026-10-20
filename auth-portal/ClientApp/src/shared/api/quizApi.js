@@ -36,6 +36,17 @@ export const quizApi = {
     headers: { Authorization: `Bearer ${token}` },
   }),
   availableLessons: () => request('/api/quiz/available-lessons'),
+  playQuiz: (quizId, token) => request(`/api/quiz/play/${encodeURIComponent(quizId)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
+  submitAttempt: (payload, token) => request('/api/quiz/attempt', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(payload),
+  }),
+  myAttempts: (token) => request('/api/quiz/attempts', {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   packages: () => request('/api/quiz/packages'),
   content: (token) => request('/api/quiz/content', { headers: { Authorization: `Bearer ${token}` } }),
   contentDetails: (id, token) => request(`/api/quiz/content/${id}`, {

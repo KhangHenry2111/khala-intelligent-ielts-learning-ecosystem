@@ -3,8 +3,10 @@ import { quizApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { SectionHead } from '../../../shared/ui/SectionHead';
 import { ReviewItem } from './components/ReviewItem';
+import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
 export function AiReviewPage() {
+  const { t } = useLanguage();
   const { user } = useAuth();
   const [reviewQueue, setReviewQueue] = useState([]);
   const [loadingQueue, setLoadingQueue] = useState(true);
@@ -101,24 +103,24 @@ export function AiReviewPage() {
     <div className="dashboard-container">
       <section className="glass-card">
         <SectionHead title="Quiz review" actionLabel="Repair missing creators" onAction={handleRepair} />
-        {notice && <p className="teacher-quiz-notice success" role="status">{notice}</p>}
-        {repairing && <p className="content-list-state" role="status">Updating creator records…</p>}
-        {loadError && <p className="teacher-quiz-notice error" role="alert">{loadError}</p>}
+        {notice && <p className="teacher-quiz-notice success" role="status">{t(notice)}</p>}
+        {repairing && <p className="content-list-state" role="status">{t('Updating creator records…')}</p>}
+        {loadError && <p className="teacher-quiz-notice error" role="alert">{t(loadError)}</p>}
         <div className="quiz-review-toolbar">
-          <label htmlFor="quiz-review-scope">Creator filter</label>
+          <label htmlFor="quiz-review-scope">{t('Creator filter')}</label>
           <select id="quiz-review-scope" value={scope} onChange={(event) => { setScope(event.target.value); setCreatorId(''); }}>
-            <option value="all">All quizzes</option><option value="mine">Created by me</option><option value="unassigned">Missing creator</option><option value="creator">Created by…</option>
+            <option value="all">{t('All quizzes')}</option><option value="mine">{t('Created by me')}</option><option value="unassigned">{t('Missing creator')}</option><option value="creator">{t('Created by…')}</option>
           </select>
           {scope === 'creator' && <select aria-label="Select quiz creator" value={creatorId} onChange={(event) => setCreatorId(event.target.value)}>
-            <option value="">Select a creator</option>{creators.map((creator) => <option key={creator.id} value={creator.id}>{creator.name} · {creator.id}</option>)}
+            <option value="">{t('Select a creator')}</option>{creators.map((creator) => <option key={creator.id} value={creator.id}>{creator.name} · {creator.id}</option>)}
           </select>}
-          <span>{reviewQueue.length} quizzes</span>
+          <span>{reviewQueue.length} {t('quizzes')}</span>
         </div>
         <div className="queue-list">
           {loadingQueue ? (
-            <div className="queue-item empty-state">Loading review queue...</div>
+            <div className="queue-item empty-state">{t('Loading review queue...')}</div>
           ) : reviewQueue.length === 0 ? (
-            <div className="queue-item empty-state">No quizzes match this creator filter.</div>
+            <div className="queue-item empty-state">{t('No quizzes match this creator filter.')}</div>
           ) : (
             reviewQueue.map((item) => (
               <ReviewItem
