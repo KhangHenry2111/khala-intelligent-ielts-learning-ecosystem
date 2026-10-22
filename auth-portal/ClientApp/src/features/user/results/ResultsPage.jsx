@@ -54,14 +54,31 @@ export function ResultsPage() {
               <div className="learner-attempt-copy">
                 <span className="admin-content-skill">{t(attempt.skill)}</span>
                 <h2>{attempt.title}</h2>
-                <p>{attempt.submittedAt ? new Date(attempt.submittedAt).toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US') : '—'}</p>
+                <p className="learner-attempt-date">
+                  {attempt.submittedAt ? (
+                    <time dateTime={attempt.submittedAt}>
+                      {new Date(attempt.submittedAt).toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US')}
+                    </time>
+                  ) : '—'}
+                </p>
               </div>
               <div className="learner-attempt-stats">
-                <strong>{Math.round(attempt.score)}%</strong>
-                <span>{attempt.correctCount}/{attempt.totalQuestions} {t('correct answers')}</span>
-                <small>{formatDuration(attempt.timeTaken, t)}</small>
+                <div className="learner-attempt-stat learner-attempt-score">
+                  <span>{t('Quiz score')}</span>
+                  <strong>{Math.round(attempt.score)}%</strong>
+                </div>
+                <div className="learner-attempt-stat">
+                  <span>{t('Correct answers')}</span>
+                  <strong>{attempt.correctCount}/{attempt.totalQuestions}</strong>
+                </div>
+                <div className="learner-attempt-stat">
+                  <span>{t('Time spent')}</span>
+                  <strong>{formatDuration(attempt.timeTaken, t)}</strong>
+                </div>
               </div>
-              <Link className="learner-attempt-retry" to={`/user/quiz/${attempt.quizId}`}>{t('Retake quiz')}</Link>
+              <Link className="learner-attempt-retry" to={`/user/quiz/${attempt.quizId}`}>
+                {t('Retake quiz')} <span aria-hidden="true">→</span>
+              </Link>
             </article>
           ))}
         </div>}

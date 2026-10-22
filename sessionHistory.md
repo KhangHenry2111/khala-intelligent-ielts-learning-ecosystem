@@ -459,3 +459,34 @@ _______________________________________
 - Added Vietnamese-English language switching and translated active learner, teacher, administrator, profile and authentication screens.
 - Validation: frontend and ASP.NET builds succeeded. Existing .NET tests are blocked by the pre-existing FakeAuthService missing IAuthService.RevokeSessions; build outputs were isolated to avoid the running AuthPortal process lock.
 _______________________________________
+
+[Id 24]:
+[Model_name]: Codex
+[Time]: 2026-10-22 12:53
+[Title]: Redesigning bilingual UI alignment
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/features/auth/AuthPage.jsx
+- auth-portal/ClientApp/src/features/auth/components/AuthForm.jsx
+- auth-portal/ClientApp/src/features/user/results/ResultsPage.jsx
+- auth-portal/ClientApp/src/shared/i18n/LanguageContext.jsx
+- auth-portal/ClientApp/src/styles.css
+[Description]
+- Read mustRead.md and align Vietnamese/English UI positioning across the authentication and quiz results components.
+- Aligned language-switcher placement, corrected role-specific auth button labels, and redesigned responsive quiz result cards for Vietnamese and English.
+_______________________________________
+
+[Id 25]:
+[Model_name]: Codex
+[Time]: 2026-10-22 13:05
+[Title]: Splitting UI language dictionaries
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/index.html
+- auth-portal/ClientApp/src/shared/i18n/LanguageContext.jsx
+- auth-portal/ClientApp/src/shared/i18n/locales/VI/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+[Description]
+- Move Vietnamese and English UI translations into separate VI and EN locale folders and wire the language provider to those modules.
+- Separated UI dictionaries into standalone VI and EN locale modules, aligned the HTML default language with the app default, and verified locale consistency and production build.
+_______________________________________

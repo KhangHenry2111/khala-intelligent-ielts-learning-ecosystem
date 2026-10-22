@@ -1,6 +1,12 @@
 import { Link } from 'react-router-dom';
 import { useLanguage } from '../../../shared/i18n/LanguageContext';
 
+const submitLabels = {
+  user: { login: 'Sign in as a user', register: 'Create a user account' },
+  teacher: { login: 'Sign in as a teacher', register: 'Create a teacher account' },
+  admin: { login: 'Sign in as an admin', register: 'Create an admin account' },
+};
+
 function Field({ name, label, type = 'text', required = true, value, onChange }) {
   const { t } = useLanguage();
   return (
@@ -26,6 +32,7 @@ export function AuthForm({
   const heading = isRegister
     ? t('Create an account for') + ` ${t(accountLabel)}`
     : `${t('Welcome back')}, ${t(title)}.`;
+  const submitLabel = submitLabels[role]?.[isRegister ? 'register' : 'login'];
 
   return (
     <form onSubmit={onSubmit} className="auth-form">
@@ -67,7 +74,7 @@ export function AuthForm({
       )}
       {error && <p className="form-error" role="alert">{t(error)}</p>}
       <button disabled={busy}>
-        {busy ? t('Processing...') : isRegister ? `${t('Create account')} ${t('for')} ${t(accountLabel)}` : `${t('Sign in as')} ${t(accountLabel)}`} <span>→</span>
+        {busy ? t('Processing...') : t(submitLabel)} <span>→</span>
       </button>
       {role !== 'admin' && (
         <p className="auth-switch">

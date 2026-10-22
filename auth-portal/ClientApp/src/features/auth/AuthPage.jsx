@@ -58,12 +58,14 @@ export function AuthPage({ mode, role: fixedRole }) {
     <main className="auth-shell">
       <AuthBrandPanel title={t(title)} />
       <section className="auth-panel">
-        <nav className="auth-role-nav">
+        <div className="auth-panel-toolbar">
+          <nav className="auth-role-nav">
+            <Link to="/user/login">{t('User')}</Link>
+            <Link to="/teacher/login">{t('Teacher')}</Link>
+            <Link to="/admin/login">{t('Admin')}</Link>
+          </nav>
           <LanguageSwitcher />
-          <Link to="/user/login">{t('User')}</Link>
-          <Link to="/teacher/login">{t('Teacher')}</Link>
-          <Link to="/admin/login">{t('Admin')}</Link>
-        </nav>
+        </div>
         <AuthForm
           role={role}
           title={title}
