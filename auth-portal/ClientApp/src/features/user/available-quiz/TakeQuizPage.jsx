@@ -11,7 +11,7 @@ function parseOptions(value) {
     try {
       parsed = JSON.parse(value);
     } catch {
-      return value.split(/\r?\n/).map((text) => text.trim()).filter(Boolean);
+      parsed = value.split(/\s*\|\s*|\r?\n/).map((text) => text.trim()).filter(Boolean);
     }
   }
   if (Array.isArray(parsed)) {
@@ -23,13 +23,13 @@ function parseOptions(value) {
       const optionValue = option.value ?? option.id ?? option.key ?? option.label ?? String(index + 1);
       const label = option.label ?? option.text ?? option.content ?? String(optionValue);
       return { value: String(optionValue), label: String(label) };
-    });
+    }).filter((option) => option.label.trim());
   }
   if (parsed && typeof parsed === 'object') {
     return Object.entries(parsed).map(([valueKey, label]) => ({
       value: valueKey,
       label: typeof label === 'string' ? label : JSON.stringify(label),
-    }));
+    })).filter((option) => option.label.trim());
   }
   return [];
 }
@@ -209,6 +209,16 @@ export function TakeQuizPage() {
             </div>
             <span className="take-quiz-progress">{t('Progress')}: {answeredCount}/{questions.length}</span>
           </header>
+          <div
+            className="take-quiz-progress-track"
+            role="progressbar"
+            aria-label={t('Progress')}
+            aria-valuemin={1}
+            aria-valuemax={questions.length}
+            aria-valuenow={currentIndex + 1}
+          >
+            <span style={{ width: `${((currentIndex + 1) / questions.length) * 100}%` }} />
+          </div>
 
           {quiz.passageContent && (
             <section className="take-quiz-passage">

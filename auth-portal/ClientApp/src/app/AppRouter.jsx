@@ -118,7 +118,7 @@ export function AppRouter() {
       <Route path="/instructor/register" element={<AuthPage mode="register" role="teacher" />} />
 
       <Route path="/:role/dashboard" element={<RoleRoute><LayoutPage><DashboardSwitch /></LayoutPage></RoleRoute>} />
-      <Route path="/user/quiz/:quizId" element={<Protected role="user"><LayoutPage><TakeQuizPage /></LayoutPage></Protected>} />
+      <Route path="/user/quiz/:quizId" element={<Protected role="user"><TakeQuizPage /></Protected>} />
       <Route path="/:role/profile" element={<RoleRoute><LayoutPage><ProfilePage /></LayoutPage></RoleRoute>} />
       <Route path="/:role/feature/:feature" element={<RoleRoute><FeatureRedirect /></RoleRoute>} />
       <Route path="/:role/:feature" element={<RoleRoute><LayoutPage><FeaturePage /></LayoutPage></RoleRoute>} />
