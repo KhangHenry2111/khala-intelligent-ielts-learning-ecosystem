@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { animate, stagger } from 'animejs';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { authApi } from '../../shared/api';
 import { useAuth } from '../../shared/auth/AuthContext';
@@ -18,8 +19,22 @@ export function AuthPage({ mode, role: fixedRole }) {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const authPanelRef = useRef(null);
   const { signIn } = useAuth();
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const elements = authPanelRef.current?.querySelectorAll('.auth-panel-toolbar, .auth-form > *');
+    if (!elements?.length || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return undefined;
+    const entrance = animate(elements, {
+      opacity: [0, 1],
+      translateY: [12, 0],
+      duration: 480,
+      delay: stagger(55),
+      ease: 'outCubic',
+    });
+    return () => entrance.revert();
+  }, [mode, role]);
 
   function update(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -57,7 +72,7 @@ export function AuthPage({ mode, role: fixedRole }) {
   return (
     <main className="auth-shell">
       <AuthBrandPanel title={t(title)} />
-      <section className="auth-panel">
+      <section className="auth-panel" ref={authPanelRef}>
         <div className="auth-panel-toolbar">
           <nav className="auth-role-nav">
             <Link to="/user/login">{t('User')}</Link>

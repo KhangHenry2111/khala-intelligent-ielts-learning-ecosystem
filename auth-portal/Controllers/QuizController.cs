@@ -806,7 +806,7 @@ public class QuizController : ControllerBase
             var score = correctCount * 100d / expectedAnswers.Count;
             using (var cmd = new SqlCommand(@"
                 INSERT INTO QuizAttempt (AttemptID, UserID, QuizID, Score, TimeTaken, StartedAt, SubmittedAt, Status)
-                VALUES (@AttemptID, @UserID, @QuizID, @Score, @TimeTaken, DATEADD(SECOND, -@TimeTaken, GETDATE()), GETDATE(), 'Submitted')", conn, tx))
+                VALUES (@AttemptID, @UserID, @QuizID, @Score, @TimeTaken, DATEADD(SECOND, -@TimeTaken, GETDATE()), GETDATE(), 'Completed')", conn, tx))
             {
                 cmd.Parameters.Add(new SqlParameter("@AttemptID", SqlDbType.UniqueIdentifier) { Value = attemptId });
                 cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });

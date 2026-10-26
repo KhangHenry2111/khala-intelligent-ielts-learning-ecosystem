@@ -490,3 +490,58 @@ _______________________________________
 - Move Vietnamese and English UI translations into separate VI and EN locale folders and wire the language provider to those modules.
 - Separated UI dictionaries into standalone VI and EN locale modules, aligned the HTML default language with the app default, and verified locale consistency and production build.
 _______________________________________
+
+[Id 26]:
+[Model_name]: Codex
+[Time]: 2026-10-26 21:26
+[Title]: Cải thiện UI IELTS Study Assistant với giao diện sáng tối và refactor layout
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/shared/ui/ThemeContext.jsx
+- auth-portal/ClientApp/src/main.jsx
+- auth-portal/ClientApp/src/shared/layout/MainLayout.jsx
+- auth-portal/ClientApp/src/shared/layout/Sidebar.jsx
+- auth-portal/ClientApp/src/shared/layout/Topbar.jsx
+- auth-portal/ClientApp/src/app/MainLayout.jsx
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-BG1rv_QF.js
+- auth-portal/wwwroot/assets/index-DL4aslMO.css
+[Description]
+- Đọc mustRead.md và kiểm tra cấu trúc frontend; rà soát layout trùng, thiết kế hệ theme và responsive polish cho toàn app.
+- Bổ sung theme sáng/tối có lưu lựa chọn và áp dụng palette theo data-theme cho các vùng chính, biểu mẫu, bảng và trang làm quiz.
+- Thêm menu sidebar trượt trên thiết bị nhỏ, trạng thái đóng sau điều hướng và xoá MainLayout không còn được dùng.
+- Build frontend thành công bằng npm.cmd run build.
+_______________________________________
+
+[Id 27]:
+[Model_name]: Codex
+[Time]: 2026-10-26 21:33
+[Title]: Tích hợp anime.js để tăng tương tác giao diện
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/package.json
+- auth-portal/ClientApp/package-lock.json
+- auth-portal/ClientApp/src/shared/layout/MainLayout.jsx
+- auth-portal/ClientApp/src/features/auth/AuthPage.jsx
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-BBk6GgRa.js
+[Description]
+- Kiểm tra các điểm hoạt ảnh trong frontend và thêm hiệu ứng chuyển trang, xuất hiện nội dung và phản hồi thao tác bằng anime.js.
+- Cài animejs 4.5.0 làm dependency và thêm hiệu ứng xuất hiện có stagger cho nội dung khi đổi route và trang xác thực.
+- Hỗ trợ prefers-reduced-motion để tắt animation khi người dùng yêu cầu giảm chuyển động.
+- Build frontend thành công bằng npm.cmd run build.
+_______________________________________
+
+[Id 28]:
+[Model_name]: Codex
+[Time]: 2026-10-26 21:40
+[Title]: Sửa lỗi lưu lượt làm quiz do status vi phạm CHECK constraint
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/QuizController.cs
+[Description]
+- Truy vết endpoint submit attempt và đối chiếu giá trị Status với CHECK constraint QuizAttempt trong sqlScripts.sql.
+- Đổi trạng thái được lưu khi nộp quiz từ Submitted sang Completed, đúng với CHECK constraint Status cho phép Completed/InProgress.
+- Xác nhận backend build thành công tại thư mục build-check riêng vì tiến trình ứng dụng đang giữ khóa AuthPortal.dll hiện tại.
+_______________________________________

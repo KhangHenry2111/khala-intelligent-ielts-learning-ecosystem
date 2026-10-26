@@ -1,0 +1,30 @@
+{
+  "title": "Urban Gardens and City Life",
+  "topic": "Environment",
+  "level": "Intermediate",
+  "format": "MULTIPLE_CHOICE_SINGLE",
+  "passage": "Across many large cities, unused rooftops and narrow strips of land are being transformed into community gardens. These projects do more than provide fresh vegetables. They give neighbours a place to meet, help children learn where food comes from, and reduce the distance produce travels before reaching a kitchen. Some gardens collect rainwater in storage tanks, while others use lightweight soil to protect older buildings. Although volunteers can struggle to find time during busy seasons, local schools and residents have helped several projects continue year after year. Researchers are now studying whether small green spaces can also make crowded neighbourhoods cooler during summer heat.",
+  "questions": [
+    {
+      "question": "What is one benefit of community gardens mentioned in the passage?",
+      "options": { "A": "They create places for neighbours to meet", "B": "They replace local schools", "C": "They make buildings taller", "D": "They eliminate summer heat" },
+      "answer": "A",
+      "difficulty": "Beginner",
+      "explanation": "The passage says gardens give neighbours a place to meet."
+    },
+    {
+      "question": "Why do some rooftop gardens use lightweight soil?",
+      "options": { "A": "To attract more researchers", "B": "To protect older buildings", "C": "To grow larger trees", "D": "To store rainwater" },
+      "answer": "B",
+      "difficulty": "Intermediate",
+      "explanation": "Lightweight soil helps protect the structure of older buildings."
+    },
+    {
+      "question": "Who has helped some garden projects continue over time?",
+      "options": { "A": "Tourists and businesses", "B": "Researchers and architects", "C": "Local schools and residents", "D": "Farmers from rural areas" },
+      "answer": "C",
+      "difficulty": "Intermediate",
+      "explanation": "The passage specifically mentions local schools and residents."
+    }
+  ]
+}

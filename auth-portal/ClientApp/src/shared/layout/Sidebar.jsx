@@ -11,7 +11,7 @@ const menus = {
   admin: adminNavItems,
 };
 
-export function Sidebar({ role, user, onLogout }) {
+export function Sidebar({ role, user, onLogout, onNavigate }) {
   const { t } = useLanguage();
   const location = useLocation();
   const currentMenu = menus[role] || menus.user;
@@ -28,6 +28,7 @@ export function Sidebar({ role, user, onLogout }) {
           <NavLink
             key={item.path}
             to={item.path}
+            onClick={onNavigate}
             end={item.path === '/teacher/dashboard' || item.path === '/admin/dashboard' || item.path === '/user/dashboard'}
             className={() => `nav-item ${location.pathname === item.path ? 'active' : ''}`}
           >
