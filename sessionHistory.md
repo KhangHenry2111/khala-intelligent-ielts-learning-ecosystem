@@ -545,3 +545,49 @@ _______________________________________
 - Đổi trạng thái được lưu khi nộp quiz từ Submitted sang Completed, đúng với CHECK constraint Status cho phép Completed/InProgress.
 - Xác nhận backend build thành công tại thư mục build-check riêng vì tiến trình ứng dụng đang giữ khóa AuthPortal.dll hiện tại.
 _______________________________________
+
+[Id 29]:
+[Model_name]: Codex
+[Time]: 2026-10-27 14:14
+[Title]: Display generated AI quiz full screen
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/features/user/ai-quiz/AiQuizPage.jsx
+- auth-portal/ClientApp/src/features/user/ai-quiz/components/QuizPreview.jsx
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/VI/index.js
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-Btv_qnn9.js
+- auth-portal/wwwroot/assets/index-DmXi2xn3.css
+- auth-portal/wwwroot/assets/index-BBk6GgRa.js
+- auth-portal/wwwroot/assets/index-DL4aslMO.css
+[Description]
+- Read mustRead.md, then update the AI quiz experience so generated quizzes open in a full-screen view.
+- Generated quizzes now replace the form with a viewport-filling preview that keeps Word/Excel export and provides a return button.
+- Added Vietnamese label localization and verified the frontend production build.
+- Confirmed the production build and checked the patch for whitespace errors.
+_______________________________________
+
+[Id 30]:
+[Model_name]: Codex
+[Time]: 2026-10-27 14:23
+[Title]: Build teacher discovery and class registration
+[Status]: Done
+[Changed_File]:
+- auth-portal/Controllers/LearningController.cs
+- auth-portal/ClientApp/src/features/user/classes/ClassesPage.jsx
+- auth-portal/ClientApp/src/app/AppRouter.jsx
+- auth-portal/ClientApp/src/features/user/navigation.js
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/VI/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-CuefrVW7.js
+- auth-portal/wwwroot/assets/index-D3poz1Kq.css
+[Description]
+- Inspect user-facing teacher, class, lesson, and messaging flows; implement teacher discovery, profiles, class enrollment, direct messaging, and teacher-specific lessons.
+- User landing route now opens teacher directory; teacher details load all approved lessons filtered by teacher ID, with free lesson registration and a direct email compose flow.
+- Added localized teacher profile actions and contact email data to the API. Frontend and backend builds succeeded; browser verified directory and teacher lesson listing.
+_______________________________________

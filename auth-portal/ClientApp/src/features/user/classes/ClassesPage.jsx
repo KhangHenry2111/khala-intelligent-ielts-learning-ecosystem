@@ -20,6 +20,8 @@ export function ClassesPage() {
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState('');
   const [registered, setRegistered] = useState(() => new Set());
+  const [messageSubject, setMessageSubject] = useState('');
+  const [messageBody, setMessageBody] = useState('');
 
   useEffect(() => {
     let active = true;
@@ -52,6 +54,21 @@ export function ClassesPage() {
     } finally { setBusyId(''); }
   };
 
+  const openMessage = () => {
+    setMessageSubject(`${t('Class inquiry')} — ${profile.name}`);
+    setMessageBody('');
+    setNotice('');
+  };
+
+  const sendMessage = (event) => {
+    event.preventDefault();
+    if (!profile?.email || !messageSubject.trim() || !messageBody.trim()) return;
+    const mailto = `mailto:${profile.email}?subject=${encodeURIComponent(messageSubject.trim())}&body=${encodeURIComponent(messageBody.trim())}`;
+    window.location.href = mailto;
+    setMessageSubject('');
+    setMessageBody('');
+  };
+
   return (
     <div className="dashboard-container learner-classes-page">
       <section className="glass-card available-lessons-card">
@@ -71,6 +88,26 @@ export function ClassesPage() {
               </div>
               <div className="teacher-profile-stat"><strong>{profile.totalStudents || 0}</strong><span>{t('học viên')}</span>{profile.rating != null && <><strong>★ {profile.rating.toFixed(1)}</strong><span>{t('đánh giá')}</span></>}</div>
             </article>
+            <div className="teacher-contact-actions">
+              <button type="button" className="feature-action" onClick={openMessage} disabled={!profile.email}>
+                {t('Nhắn tin trực tiếp')}
+              </button>
+              <span>{t('Danh sách bên dưới hiển thị toàn bộ bài giảng của giáo viên này.')}</span>
+            </div>
+            {messageSubject || messageBody ? (
+              <form className="teacher-message-form" onSubmit={sendMessage}>
+                <h3>{t('Gửi email cho giáo viên')}</h3>
+                <label htmlFor="teacher-message-subject">{t('Tiêu đề')}</label>
+                <input id="teacher-message-subject" value={messageSubject} onChange={(event) => setMessageSubject(event.target.value)} required maxLength={150} />
+                <label htmlFor="teacher-message-body">{t('Nội dung tin nhắn')}</label>
+                <textarea id="teacher-message-body" value={messageBody} onChange={(event) => setMessageBody(event.target.value)} required rows={4} maxLength={4000} />
+                <div className="teacher-message-actions">
+                  <button type="button" className="secondary-btn" onClick={() => { setMessageSubject(''); setMessageBody(''); }}>{t('Hủy')}</button>
+                  <button type="submit" className="feature-action">{t('Mở ứng dụng email')}</button>
+                </div>
+                <small>{t('Tin nhắn sẽ được mở trong ứng dụng email mặc định của bạn.')}</small>
+              </form>
+            ) : null}
             <div className="available-lessons-heading teacher-classes-heading"><div><h2>{t('Lớp & lesson')}</h2><p>{lessons.length} {t('lesson đang mở')}</p></div></div>
             {lessons.length === 0 ? <div className="available-lessons-empty"><h2>{t('Chưa có lớp học')}</h2><p>{t('Giáo viên chưa đăng lesson nào được duyệt.')}</p></div> : <div className="available-lessons-grid">
               {lessons.map((lesson) => <article className="available-lesson-tile" key={lesson.materialId}>
@@ -83,11 +120,12 @@ export function ClassesPage() {
             </div>}
           </>
         ) : loading ? <p className="content-list-state" role="status">{t('Đang tải giáo viên…')}</p> : teachers.length === 0 ? <div className="available-lessons-empty"><h2>{t('Chưa có giáo viên')}</h2><p>{t('Danh sách giáo viên sẽ được hiển thị tại đây.')}</p></div> : <div className="teacher-directory-grid">
-          {teachers.map((teacher) => <button className="teacher-directory-card" key={teacher.teacherId} type="button" onClick={() => setParams({ teacher: teacher.teacherId })}>
+          {teachers.map((teacher) => <article className="teacher-directory-card" key={teacher.teacherId}>
             {teacher.avatar ? <img src={teacher.avatar} alt="" /> : <span className="teacher-profile-avatar">{teacher.name?.[0]?.toUpperCase() || 'T'}</span>}
             <span className="teacher-directory-details"><strong>{teacher.name}</strong><span>{t(teacher.specialization || teacher.qualification || 'Giáo viên IELTS')}</span><span>{teacher.experienceYears ?? 0} {t('năm kinh nghiệm')} · {teacher.classCount} {t('lớp')}</span></span>
             {teacher.ieltsBand != null && <span className="teacher-band">IELTS {teacher.ieltsBand}</span>}
-          </button>)}
+            <button type="button" className="teacher-detail-button" onClick={() => setParams({ teacher: teacher.teacherId })}>{t('Xem chi tiết')}</button>
+          </article>)}
         </div>}
       </section>
     </div>

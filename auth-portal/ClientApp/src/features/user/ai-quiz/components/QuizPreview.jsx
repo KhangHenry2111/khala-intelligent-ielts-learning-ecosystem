@@ -1,3 +1,5 @@
+import { useLanguage } from '../../../../shared/i18n/LanguageContext';
+
 function flattenQuestions(quiz) {
   if (quiz?.questions) return quiz.questions;
   const groups = quiz?.QuestionGroups || quiz?.questionGroups || [];
@@ -17,7 +19,7 @@ function parseOptions(options) {
   return [];
 }
 
-export function QuizPreview({ quiz, onExport }) {
+export function QuizPreview({ quiz, onClose, onExport }) {
   const { t } = useLanguage();
   if (!quiz) return null;
 
@@ -27,25 +29,33 @@ export function QuizPreview({ quiz, onExport }) {
   const questions = flattenQuestions(quiz);
 
   return (
-    <section className="quiz-result glass-card">
-      <span className="eyebrow">{t('AI quiz')}</span>
-      <h2>{title}</h2>
-      {passage ? <p className="quiz-passage">{passage}</p> : null}
-      {transcript ? <p className="quiz-passage"><strong>{t('Transcript')}:</strong> {transcript}</p> : null}
-      {questions.map((question, index) => (
-        <article className="quiz-question" key={`${question.Content || question.content}-${index}`}>
-          <strong>{index + 1}. {question.content || question.Content}</strong>
-          {parseOptions(question.options || question.Options).map((option) => (
-            <div key={option}>{option}</div>
-          ))}
-          <small>{t('Answer')}: {question.correctAnswer || question.CorrectAnswer || '—'}</small>
-        </article>
-      ))}
-      <div className="quiz-exports">
-        <button type="button" onClick={() => onExport('docx')}>Word</button>
-        <button type="button" onClick={() => onExport('xlsx')}>Excel</button>
+    <section className="quiz-fullscreen" role="dialog" aria-modal="true" aria-labelledby="ai-quiz-result-title">
+      <div className="quiz-fullscreen-content">
+        <header className="quiz-fullscreen-header">
+          <div>
+            <span className="eyebrow">{t('AI quiz')}</span>
+            <h1 id="ai-quiz-result-title">{title}</h1>
+          </div>
+          <button className="quiz-close" type="button" onClick={onClose}>
+            {t('Back to generator')}
+          </button>
+        </header>
+        {passage ? <p className="quiz-passage">{passage}</p> : null}
+        {transcript ? <p className="quiz-passage"><strong>{t('Transcript')}:</strong> {transcript}</p> : null}
+        {questions.map((question, index) => (
+          <article className="quiz-question" key={`${question.Content || question.content}-${index}`}>
+            <strong>{index + 1}. {question.content || question.Content}</strong>
+            {parseOptions(question.options || question.Options).map((option) => (
+              <div key={option}>{option}</div>
+            ))}
+            <small>{t('Answer')}: {question.correctAnswer || question.CorrectAnswer || '—'}</small>
+          </article>
+        ))}
+        <div className="quiz-exports">
+          <button type="button" onClick={() => onExport('docx')}>Word</button>
+          <button type="button" onClick={() => onExport('xlsx')}>Excel</button>
+        </div>
       </div>
     </section>
   );
 }
-import { useLanguage } from '../../../../shared/i18n/LanguageContext';

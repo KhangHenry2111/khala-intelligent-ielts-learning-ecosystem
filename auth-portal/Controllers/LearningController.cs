@@ -66,7 +66,7 @@ public class LearningController : ControllerBase
         {
             using var conn = GetConnection(); conn.Open();
             using var teacherCmd = new SqlCommand(@"SELECT FullName, Avatar, Biography, Qualification, IELTSBand, ExperienceYears,
-                Specialization, AverageRating, TotalStudents FROM Teacher WHERE TeacherID = @Id AND Status = 'Active'", conn);
+                Specialization, AverageRating, TotalStudents, Email FROM Teacher WHERE TeacherID = @Id AND Status = 'Active'", conn);
             teacherCmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = teacherId });
             using var teacher = teacherCmd.ExecuteReader();
             if (!teacher.Read()) return NotFound(new { success = false, message = "Teacher not found." });
@@ -75,7 +75,7 @@ public class LearningController : ControllerBase
                 biography = teacher.IsDBNull(2) ? null : teacher.GetString(2), qualification = teacher.IsDBNull(3) ? null : teacher.GetString(3),
                 ieltsBand = teacher.IsDBNull(4) ? (double?)null : teacher.GetDouble(4), experienceYears = teacher.IsDBNull(5) ? (int?)null : teacher.GetInt32(5),
                 specialization = teacher.IsDBNull(6) ? null : teacher.GetString(6), rating = teacher.IsDBNull(7) ? (double?)null : teacher.GetDouble(7),
-                totalStudents = teacher.GetInt32(8)
+                totalStudents = teacher.GetInt32(8), email = teacher.GetString(9)
             };
             teacher.Close();
             using var lessonCmd = new SqlCommand(@"SELECT m.MaterialID, m.Title, m.Description, m.Skill, m.Level, m.IsFree,

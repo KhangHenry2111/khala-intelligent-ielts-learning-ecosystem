@@ -90,21 +90,28 @@ export function AiQuizPage() {
       description="Create personalized question sets based on your learning goals."
       accessValue={quotas[userRank(user)]}
     >
-      <QuizGeneratorForm
-        skill={skill}
-        questionType={questionType}
-        difficulty={difficulty}
-        content={content}
-        status={t(status)}
-        file={file}
-        onSkillChange={handleSkillChange}
-        onQuestionTypeChange={setQuestionType}
-        onDifficultyChange={setDifficulty}
-        onContentChange={setContent}
-        onFileChange={handleFileChange}
-        onSubmit={submitQuiz}
-      />
-      <QuizPreview quiz={quiz} onExport={downloadQuiz} />
+      {quiz ? (
+        <QuizPreview
+          quiz={quiz}
+          onClose={() => setQuiz(null)}
+          onExport={downloadQuiz}
+        />
+      ) : (
+        <QuizGeneratorForm
+          skill={skill}
+          questionType={questionType}
+          difficulty={difficulty}
+          content={content}
+          status={t(status)}
+          file={file}
+          onSkillChange={handleSkillChange}
+          onQuestionTypeChange={setQuestionType}
+          onDifficultyChange={setDifficulty}
+          onContentChange={setContent}
+          onFileChange={handleFileChange}
+          onSubmit={submitQuiz}
+        />
+      )}
     </FeatureShell>
   );
 }
