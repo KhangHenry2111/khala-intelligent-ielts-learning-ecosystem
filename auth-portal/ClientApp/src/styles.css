@@ -1480,6 +1480,19 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .teacher-quiz-form { display: grid; gap: 28px; }
 .teacher-quiz-section { display: grid; gap: 16px; }
 .teacher-quiz-section h2 { margin: 0; }
+.teacher-skill-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.teacher-skill-option { display: grid; gap: 8px; min-height: 120px; padding: 16px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.teacher-skill-option span, .teacher-skill-option small { color: var(--text-secondary); font-size: .9rem; }
+.teacher-skill-option.selected { border-color: var(--primary-color); background: rgba(99,102,241,.12); }
+.teacher-skill-option.unavailable { cursor: not-allowed; opacity: .58; }
+.teacher-format-count { display: grid; gap: 7px; max-width: 460px; font-weight: 600; }
+.teacher-format-count small { color: var(--text-secondary); font-weight: 400; }
+.teacher-type-slot, .teacher-question-type-card, .teacher-writing-task-fields { display: grid; gap: 16px; }
+.teacher-type-slot { padding: 16px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; }
+.teacher-question-type-card { padding-top: 8px; }
+.teacher-question-type-card h3 { font-family: var(--font-heading); }
+.teacher-writing-task-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.teacher-writing-task-fields label { display: grid; gap: 7px; font-weight: 600; }
 .teacher-quiz-fields, .teacher-option-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .teacher-quiz-fields label, .teacher-option-fields label, .teacher-quiz-wide-field, .teacher-question-card label { display: grid; gap: 7px; font-weight: 600; }
 .teacher-quiz-form input:not([type="radio"]), .teacher-quiz-form select, .teacher-quiz-form textarea { width: 100%; padding: 11px 12px; border: 1px solid rgba(255,255,255,.16); border-radius: 9px; background: rgba(255,255,255,.055); color: inherit; font: inherit; }
@@ -1510,7 +1523,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .teacher-quiz-submit { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding-top: 16px; border-top: 1px solid rgba(255,255,255,.1); color: var(--text-secondary); }
 .teacher-quiz-submit button { padding: 12px 22px; border: 0; border-radius: 9px; background: var(--primary-color); color: white; font: inherit; font-weight: 700; cursor: pointer; }
 .teacher-quiz-submit button:disabled { opacity: .65; cursor: wait; }
-@media (max-width: 700px) { .teacher-format-grid, .teacher-quiz-fields, .teacher-option-fields, .teacher-answer-fields { grid-template-columns: 1fr; } .teacher-quiz-submit { align-items: stretch; flex-direction: column; } }
+@media (max-width: 900px) { .teacher-skill-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .teacher-format-grid, .teacher-quiz-fields, .teacher-option-fields, .teacher-answer-fields, .teacher-writing-task-fields { grid-template-columns: 1fr; } .teacher-quiz-submit { align-items: stretch; flex-direction: column; } }
 
 .admin-content-page { display: grid; gap: 22px; }
 .admin-content-hero {

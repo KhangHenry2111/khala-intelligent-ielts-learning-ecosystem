@@ -591,3 +591,23 @@ _______________________________________
 - User landing route now opens teacher directory; teacher details load all approved lessons filtered by teacher ID, with free lesson registration and a direct email compose flow.
 - Added localized teacher profile actions and contact email data to the API. Frontend and backend builds succeeded; browser verified directory and teacher lesson listing.
 _______________________________________
+
+[Id 31]:
+[Model_name]: Codex
+[Time]: 2026-10-28 13:04
+[Title]: Nâng cấp trang teacher upload quiz
+[Status]: Done
+[Changed_File]:
+- auth-portal/ClientApp/src/features/teacher/quizzes/TeacherCreateQuizPage.jsx
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/Models/QuizModels.cs
+- auth-portal/wwwroot/index.html
+- auth-portal/wwwroot/assets/index-BVCHWCYJ.js
+- auth-portal/wwwroot/assets/index-DIAtcQpj.css
+[Description]
+- Cho teacher chọn kỹ năng Reading, Listening, Writing, Speaking và chọn số lượng dạng đề trước khi hiển thị nội dung phù hợp.
+- Đã thêm luồng chọn kỹ năng, số lượng dạng và biểu mẫu Reading/Writing; khóa Listening/Speaking với nhãn sắp ra mắt.
+- Writing prompts và model answer tùy chọn được lưu trong QuizSection qua API teacher quiz.
+- Kiểm tra Vite build, dotnet build (output tạm), và thao tác UI Reading/Writing bằng browser.
+_______________________________________

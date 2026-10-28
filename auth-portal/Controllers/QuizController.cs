@@ -233,9 +233,26 @@ public class QuizController : ControllerBase
                     normalizedSkill = "Reading";
             }
 
-            if (isTeacherQuiz && normalizedSkill is not ("Reading" or "Listening"))
+            if (isTeacherQuiz && normalizedSkill is not ("Reading" or "Listening" or "Writing"))
             {
-                return BadRequest(new SaveQuizResponse { Success = false, Message = "Teacher lesson quizzes currently support Reading and Listening." });
+                return BadRequest(new SaveQuizResponse { Success = false, Message = "Teacher lesson quizzes currently support Reading, Listening and Writing." });
+            }
+
+            if (isTeacherQuiz && normalizedSkill == "Writing")
+            {
+                string[] writingSectionTypes =
+                {
+                    "TASK1_MAP", "TASK1_PROCESS", "TASK1_TABLE", "TASK1_PIE_CHART",
+                    "TASK1_BAR_CHART", "TASK1_LINE_GRAPH", "TASK2_TWO_PART_QUESTION",
+                    "TASK2_PROBLEM_SOLUTION", "TASK2_ADVANTAGES_DISADVANTAGES",
+                    "TASK2_DISCUSSION", "TASK2_OPINION",
+                };
+                if (req.Sections == null || req.Sections.Count == 0 || req.Sections.Exists(section =>
+                    string.IsNullOrWhiteSpace(section.Prompt)
+                    || Array.IndexOf(writingSectionTypes, section.SectionType) < 0))
+                {
+                    return BadRequest(new SaveQuizResponse { Success = false, Message = "Add at least one valid Writing task prompt before saving." });
+                }
             }
 
             // 2. If passage is provided, save ReadingPassage with ModerationStatus = 'Pending'
@@ -323,6 +340,34 @@ public class QuizController : ControllerBase
                 cmdQuiz.Parameters.Add(new SqlParameter("@AudioID", SqlDbType.UniqueIdentifier) { Value = audioId.HasValue ? (object)audioId.Value : DBNull.Value });
 
                 cmdQuiz.ExecuteNonQuery();
+            }
+
+            if (isTeacherQuiz && normalizedSkill == "Writing")
+            {
+                const string insertSectionSql = @"
+                    INSERT INTO QuizSection (
+                        SectionID, QuizID, Skill, SectionType, Title, Prompt,
+                        Transcript, ModelAnswer, ExtraJson, OrderIndex, CreatedAt
+                    ) VALUES (
+                        @SectionID, @QuizID, @Skill, @SectionType, @Title, @Prompt,
+                        @Transcript, @ModelAnswer, @ExtraJson, @OrderIndex, @CreatedAt
+                    )";
+                foreach (var section in req.Sections)
+                {
+                    using var cmdSection = new SqlCommand(insertSectionSql, conn, tx);
+                    cmdSection.Parameters.Add(new SqlParameter("@SectionID", SqlDbType.UniqueIdentifier) { Value = Guid.NewGuid() });
+                    cmdSection.Parameters.Add(new SqlParameter("@QuizID", SqlDbType.UniqueIdentifier) { Value = quizId });
+                    cmdSection.Parameters.Add(new SqlParameter("@Skill", SqlDbType.NVarChar, 30) { Value = normalizedSkill });
+                    cmdSection.Parameters.Add(new SqlParameter("@SectionType", SqlDbType.NVarChar, 50) { Value = section.SectionType });
+                    cmdSection.Parameters.Add(new SqlParameter("@Title", SqlDbType.NVarChar, 255) { Value = (object?)section.Title ?? DBNull.Value });
+                    cmdSection.Parameters.Add(new SqlParameter("@Prompt", SqlDbType.NVarChar, -1) { Value = section.Prompt.Trim() });
+                    cmdSection.Parameters.Add(new SqlParameter("@Transcript", SqlDbType.NVarChar, -1) { Value = (object?)section.Transcript ?? DBNull.Value });
+                    cmdSection.Parameters.Add(new SqlParameter("@ModelAnswer", SqlDbType.NVarChar, -1) { Value = (object?)section.ModelAnswer ?? DBNull.Value });
+                    cmdSection.Parameters.Add(new SqlParameter("@ExtraJson", SqlDbType.NVarChar, -1) { Value = (object?)section.ExtraJson ?? DBNull.Value });
+                    cmdSection.Parameters.Add(new SqlParameter("@OrderIndex", SqlDbType.Int) { Value = section.OrderIndex > 0 ? section.OrderIndex : 1 });
+                    cmdSection.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
+                    cmdSection.ExecuteNonQuery();
+                }
             }
 
             // Helper to resolve QuestionTypeID
@@ -457,7 +502,7 @@ public class QuizController : ControllerBase
 
             if (isTeacherQuiz)
             {
-                if (questionsCount == 0)
+                if (questionsCount == 0 && !(normalizedSkill == "Writing" && req.Sections.Count > 0))
                 {
                     return BadRequest(new SaveQuizResponse { Success = false, Message = "Add at least one question before uploading the lesson." });
                 }

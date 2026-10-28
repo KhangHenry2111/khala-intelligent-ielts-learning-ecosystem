@@ -15,8 +15,20 @@ public class SaveQuizRequest
     public decimal Price { get; set; }
     public PassageDto? Passage { get; set; }
     public ListeningAudioDto? Audio { get; set; }
+    public List<QuizSectionDto> Sections { get; set; } = new();
     public List<QuestionGroupDto> QuestionGroups { get; set; } = new();
     public List<QuestionDto> DirectQuestions { get; set; } = new();
+}
+
+public class QuizSectionDto
+{
+    public string SectionType { get; set; } = string.Empty;
+    public string? Title { get; set; }
+    public string Prompt { get; set; } = string.Empty;
+    public string? Transcript { get; set; }
+    public string? ModelAnswer { get; set; }
+    public string? ExtraJson { get; set; }
+    public int OrderIndex { get; set; } = 1;
 }
 
 public class ListeningAudioDto
