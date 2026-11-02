@@ -1726,6 +1726,16 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .available-lesson-footer { margin-top: auto; padding-top: 12px; border-top: 1px solid rgba(255, 255, 255, .07); }
 .available-lesson-free { color: #6ee7b7; font-weight: 800; }
 .available-lesson-price { color: #fcd34d; font-weight: 800; }
+.lesson-enrollment-actions { display: grid; gap: 8px; }
+.lesson-enrollment-actions .learner-enroll-button { width: 100%; }
+.lesson-enrollment-form { display: grid; gap: 9px; padding: 13px; border: 1px solid var(--line-color); border-radius: 10px; background: var(--panel-soft); }
+.lesson-enrollment-form label { color: var(--text-secondary); font-size: .82rem; font-weight: 700; }
+.lesson-enrollment-form input { width: 100%; padding: 10px 12px; border: 1px solid var(--line-color); border-radius: 8px; background: var(--page-color); color: var(--text-primary); font: inherit; }
+.admin-enrollment-key { padding: 14px; border: 1px solid var(--line-color); border-radius: 10px; background: var(--panel-soft); }
+.admin-enrollment-key > p { color: var(--text-secondary); font-size: .84rem; line-height: 1.5; }
+.admin-enrollment-key-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 10px; }
+.admin-enrollment-key-code { padding: 9px 11px; border: 1px solid rgba(16, 185, 129, .24); border-radius: 8px; background: rgba(16, 185, 129, .08); color: #6ee7b7; font: 700 .9rem/1.4 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; user-select: all; }
+.admin-enrollment-key small { display: block; margin-top: 8px; color: var(--text-secondary); }
 .available-lessons-empty { display: grid; justify-items: center; gap: 9px; padding: 48px 18px; border: 1px dashed rgba(255, 255, 255, .12); border-radius: 14px; text-align: center; }
 .available-lessons-empty > span { color: #a5b4fc; font-size: 1.7rem; }
 .available-lessons-empty h2 { font: 700 1.05rem var(--font-heading); }

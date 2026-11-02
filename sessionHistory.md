@@ -611,3 +611,34 @@ _______________________________________
 - Writing prompts và model answer tùy chọn được lưu trong QuizSection qua API teacher quiz.
 - Kiểm tra Vite build, dotnet build (output tạm), và thao tác UI Reading/Writing bằng browser.
 _______________________________________
+
+[Id 32]:
+[Model_name]: Codex
+[Time]: 2026-11-02 12:01
+[Title]: Implementing lesson enrollment keys
+[Status]: Done
+[Changed_File]:
+- auth-portal\Controllers\LearningController.cs
+- auth-portal\Controllers\QuizController.cs
+- auth-portal\ClientApp\src\features\user\classes\ClassesPage.jsx
+- auth-portal\ClientApp\src\features\admin\content\ContentPage.jsx
+- auth-portal\ClientApp\src\shared\api\learningApi.js
+- auth-portal\ClientApp\src\shared\api\quizApi.js
+- auth-portal\ClientApp\src\shared\i18n\locales\VI\index.js
+- auth-portal\ClientApp\src\shared\i18n\locales\EN\index.js
+- sqlScripts.sql
+- ..\..\change.sql
+- auth-portal\Services\EnrollmentKeyService.cs
+- auth-portal\Models\LessonEnrollmentRequest.cs
+- auth-portal\ClientApp\src\styles.css
+- auth-portal\wwwroot\index.html
+- auth-portal\wwwroot\assets\index-BXUHYLBe.css
+- auth-portal\wwwroot\assets\index-Ds-mHKAV.js
+- ..\enrollment_key_migration.sql
+- auth-portal\wwwroot\assets\index-8Qy3J06G.js
+[Description]
+- Implement in-person lesson enrollment using lesson-specific generated keys; leave online enrollment as a placeholder.
+- Expose admin controls to generate and replace each lesson key, storing only a hash.
+- Verified Vite production build and isolated ASP.NET build; unit test run is blocked by the existing FakeAuthService interface mismatch.
+- Guarded one-time admin key display so a key response cannot appear in another lesson dialog.
+_______________________________________

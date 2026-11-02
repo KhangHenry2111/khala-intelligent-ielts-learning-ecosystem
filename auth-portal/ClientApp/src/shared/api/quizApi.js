@@ -52,6 +52,10 @@ export const quizApi = {
   contentDetails: (id, token) => request(`/api/quiz/content/${id}`, {
     headers: { Authorization: 'Bearer ' + token },
   }),
+  generateEnrollmentKey: (materialId, token) => request(`/api/quiz/material/${materialId}/enrollment-key`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   updateMaterialStatus: (id, status, token) => request(`/api/quiz/material/${id}/status`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ status }),

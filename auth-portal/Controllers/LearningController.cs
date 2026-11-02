@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using AuthPortal.Models;
 using AuthPortal.Services;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
@@ -99,34 +101,81 @@ public class LearningController : ControllerBase
     }
 
     [HttpPost("lessons/{materialId:guid}/enroll")]
-    public IActionResult Enroll(Guid materialId)
+    public IActionResult Enroll(Guid materialId, [FromBody] LessonEnrollmentRequest? request)
     {
         var session = CurrentSession();
         if (session == null || !string.Equals(session.UserType, "User", StringComparison.OrdinalIgnoreCase))
             return Unauthorized(new { success = false, message = "Sign in as a learner to register for a lesson." });
         if (!Guid.TryParse(session.Id, out var userId)) return Unauthorized(new { success = false, message = "Your learner session is invalid." });
+        var enrollmentKey = request?.EnrollmentKey?.Trim();
+        if (string.IsNullOrEmpty(enrollmentKey) || enrollmentKey.Length > 64)
+            return BadRequest(new { success = false, message = "Enter a valid enrollment key." });
+
         try
         {
-            using var conn = GetConnection(); conn.Open();
-            using var cmd = new SqlCommand(@"
-                IF NOT EXISTS (SELECT 1 FROM Material WHERE MaterialID = @MaterialID AND Status = 'Approved' AND QuizID IS NOT NULL)
-                    SELECT 'Missing';
-                ELSE IF EXISTS (SELECT 1 FROM Material WHERE MaterialID = @MaterialID AND IsFree = 0)
-                    SELECT 'Paid';
-                ELSE IF EXISTS (SELECT 1 FROM MaterialAccess WHERE MaterialID = @MaterialID AND UserID = @UserID)
-                    SELECT 'Existing';
-                ELSE
-                BEGIN
-                    INSERT INTO MaterialAccess (AccessID, MaterialID, UserID, PurchasedAt, ExpiresAt)
-                    VALUES (NEWID(), @MaterialID, @UserID, GETDATE(), NULL);
-                    SELECT 'Enrolled';
-                END", conn);
-            cmd.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId });
-            cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
-            var result = Convert.ToString(cmd.ExecuteScalar());
-            if (result == "Missing") return NotFound(new { success = false, message = "This approved lesson is no longer available." });
-            if (result == "Paid") return Conflict(new { success = false, requiresPayment = true, message = "This lesson is paid. Complete payment before registering." });
-            return Ok(new { success = true, alreadyEnrolled = result == "Existing", message = result == "Existing" ? "You are already registered for this lesson." : "You are registered for this lesson." });
+            var enrollmentKeyHash = EnrollmentKeyService.Hash(enrollmentKey);
+            using var conn = GetConnection();
+            conn.Open();
+            using var tx = conn.BeginTransaction(IsolationLevel.Serializable);
+            using var check = new SqlCommand(@"
+                SELECT m.Status, m.QuizID, m.EnrollmentKeyHash,
+                       CASE WHEN access.AccessID IS NULL THEN 0 ELSE 1 END
+                FROM Material m WITH (UPDLOCK, HOLDLOCK)
+                LEFT JOIN MaterialAccess access WITH (UPDLOCK, HOLDLOCK)
+                    ON access.MaterialID = m.MaterialID AND access.UserID = @UserID
+                WHERE m.MaterialID = @MaterialID", conn, tx);
+            check.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId });
+            check.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+
+            string? status;
+            string? storedKeyHash;
+            bool alreadyEnrolled;
+            using (var reader = check.ExecuteReader())
+            {
+                if (!reader.Read())
+                {
+                    return NotFound(new { success = false, message = "This lesson is no longer available." });
+                }
+
+                status = reader.GetString(0);
+                var hasQuiz = !reader.IsDBNull(1);
+                storedKeyHash = reader.IsDBNull(2) ? null : reader.GetString(2);
+                alreadyEnrolled = reader.GetInt32(3) == 1;
+                if (status != "Approved" || !hasQuiz)
+                {
+                    return NotFound(new { success = false, message = "This approved lesson is no longer available." });
+                }
+            }
+
+            if (storedKeyHash == null)
+            {
+                tx.Commit();
+                return Conflict(new { success = false, message = "Direct registration is not configured for this lesson yet." });
+            }
+
+            var storedHashBytes = Convert.FromHexString(storedKeyHash);
+            var providedHashBytes = Convert.FromHexString(enrollmentKeyHash);
+            if (!CryptographicOperations.FixedTimeEquals(storedHashBytes, providedHashBytes))
+            {
+                tx.Commit();
+                return BadRequest(new { success = false, message = "The enrollment key is incorrect." });
+            }
+
+            if (alreadyEnrolled)
+            {
+                tx.Commit();
+                return Ok(new { success = true, alreadyEnrolled = true, message = "You are already registered for this lesson." });
+            }
+
+            using var insert = new SqlCommand(@"
+                INSERT INTO MaterialAccess (AccessID, MaterialID, UserID, PurchasedAt, ExpiresAt)
+                VALUES (NEWID(), @MaterialID, @UserID, GETDATE(), NULL)", conn, tx);
+            insert.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId });
+            insert.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId });
+            insert.ExecuteNonQuery();
+            tx.Commit();
+
+            return Ok(new { success = true, alreadyEnrolled = false, message = "You are registered for this lesson." });
         }
         catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
     }

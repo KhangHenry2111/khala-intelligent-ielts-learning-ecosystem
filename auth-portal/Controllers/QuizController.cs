@@ -1038,23 +1038,67 @@ public class QuizController : ControllerBase
         {
             using var conn = GetConnection();
             conn.Open();
-            const string sql = @"SELECT m.MaterialID, m.QuizID, m.Title, m.Skill, m.Level, m.Status, m.CreatedAt,
-                       t.FullName, COUNT(qn.QuestionID) AS QuestionCount
+            const string sql = @"SELECT COALESCE(m.MaterialID, q.QuizID) AS ContentID, m.MaterialID, q.QuizID,
+                       COALESCE(m.Title, q.Title) AS Title, COALESCE(m.Skill, q.Skill) AS Skill,
+                       COALESCE(m.Level, q.Level) AS Level,
+                       CASE WHEN m.MaterialID IS NOT NULL THEN m.Status
+                            WHEN q.Status IN ('Draft', 'PendingReview') THEN 'Pending'
+                            ELSE q.Status END AS Status,
+                       COALESCE(m.CreatedAt, q.CreatedAt) AS CreatedAt,
+                       COALESCE(NULLIF(t.FullName, ''), NULLIF(u.FullName, '')) AS CreatorName,
+                       q.Source, COUNT(qn.QuestionID) AS QuestionCount,
+                       MAX(CASE WHEN m.EnrollmentKeyHash IS NULL THEN 0 ELSE 1 END) AS HasEnrollmentKey
                 FROM Material m
-                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
-                LEFT JOIN Question qn ON qn.QuizID = m.QuizID
-                GROUP BY m.MaterialID, m.QuizID, m.Title, m.Skill, m.Level, m.Status, m.CreatedAt, t.FullName
-                ORDER BY m.CreatedAt DESC";
+                FULL OUTER JOIN Quiz q ON q.QuizID = m.QuizID
+                LEFT JOIN Teacher t ON t.TeacherID = COALESCE(m.TeacherID, q.CreatorID)
+                LEFT JOIN [User] u ON u.UserID = q.CreatorID
+                LEFT JOIN Question qn ON qn.QuizID = q.QuizID
+                GROUP BY m.MaterialID, q.QuizID, m.Title, q.Title, m.Skill, q.Skill,
+                         m.Level, q.Level, m.Status, q.Status, m.CreatedAt, q.CreatedAt, t.FullName, u.FullName, q.Source
+                ORDER BY COALESCE(m.CreatedAt, q.CreatedAt) DESC";
             using var cmd = new SqlCommand(sql, conn);
             using var reader = cmd.ExecuteReader();
             var items = new List<object>();
             while (reader.Read()) items.Add(new {
-                materialId = reader.GetGuid(0).ToString(), quizId = reader.IsDBNull(1) ? null : reader.GetGuid(1).ToString(),
-                title = reader.GetString(2), skill = reader.GetString(3), level = reader.GetString(4),
-                status = reader.GetString(5), createdAt = reader.GetDateTime(6), teacherName = reader.IsDBNull(7) ? "" : reader.GetString(7),
-                questionCount = reader.GetInt32(8)
+                id = reader.GetGuid(0).ToString(),
+                materialId = reader.IsDBNull(1) ? null : reader.GetGuid(1).ToString(),
+                quizId = reader.IsDBNull(2) ? null : reader.GetGuid(2).ToString(),
+                title = reader.GetString(3), skill = reader.IsDBNull(4) ? "—" : reader.GetString(4),
+                level = reader.IsDBNull(5) ? null : reader.GetString(5),
+                status = reader.GetString(6), createdAt = reader.GetDateTime(7),
+                creatorName = reader.IsDBNull(8) ? "" : reader.GetString(8),
+                contentType = reader.IsDBNull(9) ? "Document" : reader.GetString(9),
+                questionCount = reader.GetInt32(10),
+                hasEnrollmentKey = reader.GetInt32(11) == 1
             });
             return Ok(new { success = true, items });
+        }
+        catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
+    }
+
+    [HttpPost("material/{id:guid}/enrollment-key")]
+    public IActionResult GenerateEnrollmentKey(Guid id)
+    {
+        var session = GetCurrentSession();
+        if (session == null || !string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase))
+            return Unauthorized(new { success = false, message = "Sign in as an admin to manage enrollment keys." });
+
+        try
+        {
+            var enrollmentKey = EnrollmentKeyService.Generate();
+            var keyHash = EnrollmentKeyService.Hash(enrollmentKey);
+            using var conn = GetConnection();
+            conn.Open();
+            using var cmd = new SqlCommand(@"
+                UPDATE Material
+                SET EnrollmentKeyHash = @KeyHash
+                WHERE MaterialID = @MaterialID AND QuizID IS NOT NULL", conn);
+            cmd.Parameters.Add(new SqlParameter("@KeyHash", SqlDbType.NVarChar, 64) { Value = keyHash });
+            cmd.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = id });
+            if (cmd.ExecuteNonQuery() == 0)
+                return NotFound(new { success = false, message = "A lesson with a quiz was not found." });
+
+            return Ok(new { success = true, enrollmentKey });
         }
         catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }
     }
@@ -1065,38 +1109,45 @@ public class QuizController : ControllerBase
         var session = GetCurrentSession();
         if (session == null || !string.Equals(session.UserType, "Admin", StringComparison.OrdinalIgnoreCase))
             return Unauthorized(new { success = false, message = "Sign in as an admin to view content details." });
-        if (!Guid.TryParse(id, out var materialId))
-            return BadRequest(new { success = false, message = "A valid material id is required." });
+        if (!Guid.TryParse(id, out var contentId))
+            return BadRequest(new { success = false, message = "A valid content id is required." });
 
         try
         {
             using var conn = GetConnection();
             conn.Open();
             const string materialSql = @"
-                SELECT m.MaterialID, m.QuizID, m.Title, m.Description, m.Skill, m.Level,
-                       m.FileURL, m.FileType, m.IsFree, m.Price, m.DownloadCount, m.Status, m.CreatedAt,
-                       t.FullName, q.Source, q.ExtraContent,
+                SELECT m.MaterialID, q.QuizID, COALESCE(m.Title, q.Title), m.Description,
+                       COALESCE(m.Skill, q.Skill), COALESCE(m.Level, q.Level),
+                       m.FileURL, m.FileType, m.IsFree, m.Price, m.DownloadCount,
+                       CASE WHEN m.MaterialID IS NOT NULL THEN m.Status
+                            WHEN q.Status IN ('Draft', 'PendingReview') THEN 'Pending'
+                            ELSE q.Status END,
+                       COALESCE(m.CreatedAt, q.CreatedAt),
+                       COALESCE(NULLIF(t.FullName, ''), NULLIF(u.FullName, '')), q.Source, q.ExtraContent,
                        rp.Title, rp.Content, rp.WordCount, rp.Topic, rp.Level,
                        la.AudioURL, la.Transcript, la.DurationSeconds
                 FROM Material m
-                LEFT JOIN Teacher t ON t.TeacherID = m.TeacherID
-                LEFT JOIN Quiz q ON q.QuizID = m.QuizID
+                FULL OUTER JOIN Quiz q ON q.QuizID = m.QuizID
+                LEFT JOIN Teacher t ON t.TeacherID = COALESCE(m.TeacherID, q.CreatorID)
+                LEFT JOIN [User] u ON u.UserID = q.CreatorID
                 LEFT JOIN ReadingPassage rp ON rp.PassageID = q.PassageID
                 LEFT JOIN ListeningAudio la ON la.AudioID = q.AudioID
-                WHERE m.MaterialID = @MaterialID";
+                WHERE m.MaterialID = @ContentID OR q.QuizID = @ContentID";
             Guid? quizId;
             object material;
             using (var cmd = new SqlCommand(materialSql, conn))
             {
-                cmd.Parameters.Add(new SqlParameter("@MaterialID", SqlDbType.UniqueIdentifier) { Value = materialId });
+                cmd.Parameters.Add(new SqlParameter("@ContentID", SqlDbType.UniqueIdentifier) { Value = contentId });
                 using var reader = cmd.ExecuteReader();
                 if (!reader.Read())
-                    return NotFound(new { success = false, message = "Lesson not found." });
+                    return NotFound(new { success = false, message = "Content not found." });
 
                 quizId = reader.IsDBNull(1) ? null : reader.GetGuid(1);
                 material = new
                 {
-                    materialId = reader.GetGuid(0).ToString(),
+                    id = reader.IsDBNull(0) ? quizId?.ToString() : reader.GetGuid(0).ToString(),
+                    materialId = reader.IsDBNull(0) ? null : reader.GetGuid(0).ToString(),
                     quizId = quizId?.ToString(),
                     title = reader.GetString(2),
                     description = reader.IsDBNull(3) ? null : reader.GetString(3),
@@ -1104,12 +1155,12 @@ public class QuizController : ControllerBase
                     level = reader.IsDBNull(5) ? null : reader.GetString(5),
                     fileUrl = reader.IsDBNull(6) ? null : reader.GetString(6),
                     fileType = reader.IsDBNull(7) ? null : reader.GetString(7),
-                    isFree = reader.GetBoolean(8),
-                    price = reader.GetDecimal(9),
-                    downloadCount = reader.GetInt32(10),
+                    isFree = reader.IsDBNull(8) || reader.GetBoolean(8),
+                    price = reader.IsDBNull(9) ? 0m : reader.GetDecimal(9),
+                    downloadCount = reader.IsDBNull(10) ? 0 : reader.GetInt32(10),
                     status = reader.GetString(11),
                     createdAt = reader.GetDateTime(12),
-                    teacherName = reader.IsDBNull(13) ? null : reader.GetString(13),
+                    creatorName = reader.IsDBNull(13) ? null : reader.GetString(13),
                     source = reader.IsDBNull(14) ? null : reader.GetString(14),
                     extraContent = reader.IsDBNull(15) ? null : reader.GetString(15),
                     passage = reader.IsDBNull(17) ? null : new
@@ -1211,7 +1262,7 @@ public class QuizController : ControllerBase
         if (session == null || (!isAdmin && !teacherId.HasValue))
             return Unauthorized(new { success = false, message = "Sign in to manage content." });
         if (!Guid.TryParse(id, out var materialId) || req?.Status is not ("Pending" or "Approved" or "Rejected"))
-            return BadRequest(new { success = false, message = "A valid material id and status (Pending, Approved, Rejected) are required." });
+            return BadRequest(new { success = false, message = "A valid content id and status (Pending, Approved, Rejected) are required." });
         try
         {
             using var conn = GetConnection(); conn.Open();
@@ -1224,7 +1275,18 @@ public class QuizController : ControllerBase
             {
                 cmd.Parameters.Add(new SqlParameter("@TeacherID", SqlDbType.UniqueIdentifier) { Value = teacherId!.Value });
             }
-            if (cmd.ExecuteNonQuery() == 0) return NotFound(new { success = false, message = "Material not found." });
+            var affected = cmd.ExecuteNonQuery();
+            if (isAdmin && affected == 0)
+            {
+                using var quizCmd = new SqlCommand(@"
+                    UPDATE Quiz
+                    SET Status = CASE WHEN @Status = 'Pending' THEN 'PendingReview' ELSE @Status END
+                    WHERE QuizID = @Id", conn);
+                quizCmd.Parameters.Add(new SqlParameter("@Status", SqlDbType.NVarChar, 20) { Value = req.Status });
+                quizCmd.Parameters.Add(new SqlParameter("@Id", SqlDbType.UniqueIdentifier) { Value = materialId });
+                affected = quizCmd.ExecuteNonQuery();
+            }
+            if (affected == 0) return NotFound(new { success = false, message = "Content not found." });
             return Ok(new { success = true, status = req.Status });
         }
         catch (Exception ex) { return StatusCode(500, new { success = false, message = ex.Message }); }

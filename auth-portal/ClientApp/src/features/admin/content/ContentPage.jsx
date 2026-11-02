@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { SectionHead } from '../../../shared/ui/SectionHead';
 import { quizApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
@@ -26,7 +26,7 @@ function renderStructuredValue(value) {
   return String(parsed);
 }
 
-function ContentDetailsDialog({ item, loading, error, onClose }) {
+function ContentDetailsDialog({ item, loading, error, onClose, onGenerateKey, generatingKey, generatedKey, keyError }) {
   const { t } = useLanguage();
   useEffect(() => {
     function closeOnEscape(event) {
@@ -60,11 +60,26 @@ function ContentDetailsDialog({ item, loading, error, onClose }) {
             <div className="content-detail-meta">
               <div><span>{t('Skill')}</span><strong>{t(item.skill || '—')}</strong></div>
               <div><span>{t('Level')}</span><strong>{t(item.level || '—')}</strong></div>
-              <div><span>{t('Teacher')}</span><strong>{item.teacherName || '—'}</strong></div>
+              <div><span>{t('Created by')}</span><strong>{item.creatorName || '—'}</strong></div>
               <div><span>{t('Status')}</span><strong>{t(item.status || '—')}</strong></div>
-              <div><span>{t('Access')}</span><strong>{item.isFree ? t('Free') : item.price != null ? `${t('Paid')} · ${item.price}` : t('Paid')}</strong></div>
+              {item.materialId ? <div><span>{t('Access')}</span><strong>{item.isFree ? t('Free') : item.price != null ? `${t('Paid')} · ${item.price}` : t('Paid')}</strong></div> : null}
               <div><span>{t('Questions')}</span><strong>{item.questions?.length || 0}</strong></div>
             </div>
+
+            {item.materialId && item.contentType === 'Teacher' ? (
+              <section className="content-detail-section admin-enrollment-key">
+                <h3>{t('Enrollment key')}</h3>
+                <p>{t('Create a separate key for this lesson. Replacing it invalidates the previous key.')}</p>
+                {keyError ? <p className="teacher-quiz-notice error" role="alert">{t(keyError)}</p> : null}
+                <div className="admin-enrollment-key-controls">
+                  <button type="button" className="admin-content-view" onClick={() => onGenerateKey(item)} disabled={generatingKey}>
+                    {generatingKey ? t('Generating…') : item.hasEnrollmentKey ? t('Replace enrollment key') : t('Generate enrollment key')}
+                  </button>
+                  {generatedKey ? <code className="admin-enrollment-key-code" aria-label={t('Generated enrollment key')}>{generatedKey}</code> : null}
+                </div>
+                {generatedKey ? <small>{t('Copy this key now. It will not be shown again after closing this dialog.')}</small> : null}
+              </section>
+            ) : null}
 
             {item.description ? <section className="content-detail-section">
               <h3>{t('Description')}</h3>
@@ -147,6 +162,10 @@ export function ContentPage() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState('');
+  const [generatingKey, setGeneratingKey] = useState(false);
+  const [generatedKey, setGeneratedKey] = useState('');
+  const [keyError, setKeyError] = useState('');
+  const selectedItemIdRef = useRef('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -164,15 +183,24 @@ export function ContentPage() {
   useEffect(() => { load(); }, [load]);
 
   async function showDetails(item) {
+    selectedItemIdRef.current = item.materialId || '';
     setSelectedItem(item);
     setDetailLoading(true);
     setDetailError('');
+    setGeneratedKey('');
+    setKeyError('');
     try {
-      const result = await quizApi.contentDetails(item.materialId, user?.accessToken);
+      const result = await quizApi.contentDetails(item.id, user?.accessToken);
       if (!result.item) {
         throw new Error(result.message || 'The lesson detail endpoint returned no lesson data. Restart the web app to load the latest API changes.');
       }
-      setSelectedItem({ ...result.item, questions: result.questions || [], sections: result.sections || [] });
+      setSelectedItem({
+        ...result.item,
+        contentType: item.contentType,
+        hasEnrollmentKey: item.hasEnrollmentKey,
+        questions: result.questions || [],
+        sections: result.sections || [],
+      });
     } catch (e) {
       setDetailError(e.message || 'Could not load lesson details.');
     } finally {
@@ -180,13 +208,34 @@ export function ContentPage() {
     }
   }
 
+  async function generateEnrollmentKey(item) {
+    if (item.hasEnrollmentKey && !window.confirm(t('Replacing this key will invalidate the previous key. Continue?'))) return;
+    setGeneratingKey(true);
+    setGeneratedKey('');
+    setKeyError('');
+    try {
+      const result = await quizApi.generateEnrollmentKey(item.materialId, user?.accessToken);
+      setItems((current) => current.map((row) => row.materialId === item.materialId ? { ...row, hasEnrollmentKey: true } : row));
+      if (selectedItemIdRef.current === item.materialId) {
+        setGeneratedKey(result.enrollmentKey);
+        setSelectedItem((current) => current?.materialId === item.materialId ? { ...current, hasEnrollmentKey: true } : current);
+      }
+    } catch (cause) {
+      if (selectedItemIdRef.current === item.materialId) {
+        setKeyError(cause.message || 'Could not generate an enrollment key.');
+      }
+    } finally {
+      setGeneratingKey(false);
+    }
+  }
+
   async function updateStatus(item, status) {
-    setBusyId(item.materialId);
+    setBusyId(item.id);
     setError('');
     try {
-      await quizApi.updateMaterialStatus(item.materialId, status, user?.accessToken);
-      setItems((all) => all.map((row) => row.materialId === item.materialId ? { ...row, status } : row));
-      setSelectedItem((current) => current?.materialId === item.materialId ? { ...current, status } : current);
+      await quizApi.updateMaterialStatus(item.id, status, user?.accessToken);
+      setItems((all) => all.map((row) => row.id === item.id ? { ...row, status } : row));
+      setSelectedItem((current) => current?.id === item.id ? { ...current, status } : current);
     } catch (e) {
       setError(e.message || 'Could not update status.');
     } finally {
@@ -195,14 +244,14 @@ export function ContentPage() {
   }
 
   async function deleteItem(item) {
-    if (!window.confirm(`Xóa bài giảng “${item.title}”?`)) return;
-    setBusyId(item.materialId);
+    if (!window.confirm(`Xóa nội dung “${item.title}”?`)) return;
+    setBusyId(item.id);
     setError('');
     try {
       if (item.quizId) await quizApi.deleteQuiz(item.quizId, user?.accessToken);
       else await quizApi.deleteMaterial(item.materialId, user?.accessToken);
-      setItems((all) => all.filter((row) => row.materialId !== item.materialId));
-      setSelectedItem((current) => current?.materialId === item.materialId ? null : current);
+      setItems((all) => all.filter((row) => row.id !== item.id));
+      setSelectedItem((current) => current?.id === item.id ? null : current);
     } catch (e) {
       setError(e.message || 'Could not delete content.');
     } finally {
@@ -220,7 +269,7 @@ export function ContentPage() {
         <div>
           <span className="admin-content-eyebrow">{t('Admin workspace')}</span>
           <h1>{t('Content management')}</h1>
-          <p>{t('Review lesson material, inspect question sets, and manage publication status.')}</p>
+          <p>{t('Review all platform content, including AI-generated quizzes, and manage publication status.')}</p>
         </div>
         <button type="button" className="admin-content-refresh" onClick={load} disabled={loading}>
           <span aria-hidden="true">↻</span> {loading ? t('Refreshing…') : t('Refresh')}
@@ -228,7 +277,7 @@ export function ContentPage() {
       </section>
 
       <div className="admin-content-stats">
-        <article><span>{t('Total lessons')}</span><strong>{items.length}</strong></article>
+        <article><span>{t('Total content')}</span><strong>{items.length}</strong></article>
         <article><span>{t('Awaiting review')}</span><strong className={pendingCount ? 'is-pending' : ''}>{pendingCount}</strong></article>
         <article><span>{t('Reading & Listening')}</span><strong>{readingListeningCount}</strong></article>
       </div>
@@ -236,8 +285,8 @@ export function ContentPage() {
       <section className="glass-card admin-content-card">
         <div className="admin-content-toolbar">
           <div>
-            <h2>{t('Lesson library')}</h2>
-            <p>{t('Choose a lesson to view its full description, reading passage or transcript, sections, and answer key.')}</p>
+            <h2>{t('Content library')}</h2>
+            <p>{t('Choose content to view its full description, reading passage or transcript, sections, and answer key.')}</p>
           </div>
           <div className="teacher-quiz-filters admin-content-filters" role="tablist" aria-label={t('Filter lessons by skill')}>
             {skills.map((value) => <button key={value} type="button" role="tab" aria-selected={skill === value} className={skill === value ? 'active' : ''} onClick={() => setSkill(value)}>{t(value)}</button>)}
@@ -245,20 +294,21 @@ export function ContentPage() {
         </div>
 
         {error && <p className="teacher-quiz-notice error" role="alert">{t(error)}</p>}
-        {loading ? <p className="content-list-state" role="status">{t('Loading content…')}</p> : visible.length === 0 ? <p className="content-list-state">{t('No lessons found for this skill.')}</p> : (
+        {loading ? <p className="content-list-state" role="status">{t('Loading content…')}</p> : visible.length === 0 ? <p className="content-list-state">{t('No content found for this skill.')}</p> : (
           <div className="table-wrap admin-content-table-wrap">
             <table className="data-table admin-content-table">
-              <thead><tr><th>{t('Lesson')}</th><th>{t('Skill')}</th><th>{t('Level')}</th><th>{t('Teacher')}</th><th>{t('Questions')}</th><th>{t('Status')}</th><th>{t('Actions')}</th></tr></thead>
-              <tbody>{visible.map((item) => <tr key={item.materialId}>
+              <thead><tr><th>{t('Content')}</th><th>{t('Type')}</th><th>{t('Skill')}</th><th>{t('Level')}</th><th>{t('Created by')}</th><th>{t('Questions')}</th><th>{t('Status')}</th><th>{t('Actions')}</th></tr></thead>
+              <tbody>{visible.map((item) => <tr key={item.id}>
                 <td><strong>{item.title}</strong><small>{new Date(item.createdAt).toLocaleDateString()}</small></td>
+                <td>{t(item.contentType === 'AI' ? 'AI-generated' : item.contentType === 'Teacher' ? 'Teacher-created' : 'Document')}</td>
                 <td><span className="admin-content-skill">{t(item.skill)}</span></td>
                 <td>{t(item.level || '—')}</td>
-                <td>{item.teacherName || '—'}</td>
+                <td>{item.creatorName || '—'}</td>
                 <td><span className="admin-content-question-count">{item.questionCount ?? 0}</span></td>
-                <td><select className="admin-content-status" aria-label={`${t('Status for')} ${item.title}`} value={item.status} disabled={busyId === item.materialId} onChange={(e) => updateStatus(item, e.target.value)}>{statuses.map((status) => <option key={status} value={status}>{t(status)}</option>)}</select></td>
+                <td><select className="admin-content-status" aria-label={`${t('Status for')} ${item.title}`} value={item.status} disabled={busyId === item.id} onChange={(e) => updateStatus(item, e.target.value)}>{statuses.map((status) => <option key={status} value={status}>{t(status)}</option>)}</select></td>
                 <td><div className="admin-content-actions">
                   <button type="button" className="admin-content-view" onClick={() => showDetails(item)}>{t('View details')}</button>
-                  <button type="button" className="button-danger" disabled={busyId === item.materialId} onClick={() => deleteItem(item)}>{t('Delete')}</button>
+                  <button type="button" className="button-danger" disabled={busyId === item.id} onClick={() => deleteItem(item)}>{t('Delete')}</button>
                 </div></td>
               </tr>)}</tbody>
             </table>
@@ -266,7 +316,21 @@ export function ContentPage() {
         )}
       </section>
 
-      {selectedItem ? <ContentDetailsDialog item={selectedItem} loading={detailLoading} error={detailError} onClose={() => setSelectedItem(null)} /> : null}
+      {selectedItem ? <ContentDetailsDialog
+        item={selectedItem}
+        loading={detailLoading}
+        error={detailError}
+        onClose={() => {
+          selectedItemIdRef.current = '';
+          setSelectedItem(null);
+          setGeneratedKey('');
+          setKeyError('');
+        }}
+        onGenerateKey={generateEnrollmentKey}
+        generatingKey={generatingKey}
+        generatedKey={generatedKey}
+        keyError={keyError}
+      /> : null}
     </div>
   );
 }

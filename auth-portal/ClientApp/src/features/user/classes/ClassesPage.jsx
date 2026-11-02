@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../../../shared/auth/AuthContext';
 import { learningApi } from '../../../shared/api';
 import { useLanguage } from '../../../shared/i18n/LanguageContext';
@@ -20,6 +20,8 @@ export function ClassesPage() {
   const [notice, setNotice] = useState('');
   const [busyId, setBusyId] = useState('');
   const [registered, setRegistered] = useState(() => new Set());
+  const [enrollmentLessonId, setEnrollmentLessonId] = useState('');
+  const [enrollmentKey, setEnrollmentKey] = useState('');
   const [messageSubject, setMessageSubject] = useState('');
   const [messageBody, setMessageBody] = useState('');
 
@@ -42,13 +44,25 @@ export function ClassesPage() {
     return () => { active = false; };
   }, [selectedId]);
 
-  const enroll = async (lesson) => {
+  const openInPersonEnrollment = (lesson) => {
     if (!user?.accessToken) { setError('Vui lòng đăng nhập tài khoản học viên để đăng ký lớp.'); return; }
+    setError('');
+    setNotice('');
+    setEnrollmentKey('');
+    setEnrollmentLessonId((current) => current === lesson.materialId ? '' : lesson.materialId);
+  };
+
+  const enroll = async (event, lesson) => {
+    event.preventDefault();
+    if (!user?.accessToken) { setError('Vui lòng đăng nhập tài khoản học viên để đăng ký lớp.'); return; }
+    if (!enrollmentKey.trim()) { setError('Vui lòng nhập enrollment key.'); return; }
     setBusyId(lesson.materialId); setError(''); setNotice('');
     try {
-      const result = await learningApi.enroll(lesson.materialId, user.accessToken);
+      const result = await learningApi.enroll(lesson.materialId, enrollmentKey.trim(), user.accessToken);
       setRegistered((current) => new Set(current).add(lesson.materialId));
       setNotice(result.message || 'Đăng ký lớp thành công.');
+      setEnrollmentKey('');
+      setEnrollmentLessonId('');
     } catch (cause) {
       setError(cause.message || 'Không thể đăng ký lesson.');
     } finally { setBusyId(''); }
@@ -114,8 +128,36 @@ export function ClassesPage() {
                 <div className="available-lesson-topline"><span className="admin-content-skill">{t(lesson.skill || 'IELTS')}</span><span className="available-lesson-level">{t(lesson.level || 'Mọi trình độ')}</span></div>
                 <h2>{lesson.title}</h2><p className="available-lesson-description">{lesson.description || t('Lesson luyện tập do giáo viên biên soạn.')}</p>
                 <div className="available-lesson-details"><span>{lesson.questionCount} {t('câu hỏi')}</span>{lesson.quizId && <span>{t('Quiz có sẵn')}</span>}</div>
-                <div className="available-lesson-footer"><span className={lesson.isFree ? 'available-lesson-free' : 'available-lesson-price'}>{lesson.isFree ? t('Miễn phí') : money(lesson.price)}</span>{lesson.isFree ? <button className="feature-action learner-enroll-button" type="button" disabled={busyId === lesson.materialId || registered.has(lesson.materialId)} onClick={() => enroll(lesson)}>{registered.has(lesson.materialId) ? t('Đã đăng ký') : busyId === lesson.materialId ? t('Đang đăng ký…') : t('Đăng ký lesson')}</button> : <button className="secondary-btn learner-enroll-button" type="button" disabled>{t('Mua lẻ — sắp có')}</button>}</div>
-                {!lesson.isFree && <small><Link to="/user/dashboard">{t('Xem gói thành viên')}</Link></small>}
+                <div className="available-lesson-footer"><span className={lesson.isFree ? 'available-lesson-free' : 'available-lesson-price'}>{lesson.isFree ? t('Miễn phí') : money(lesson.price)}</span></div>
+                <div className="lesson-enrollment-actions">
+                  <button className="feature-action learner-enroll-button" type="button" disabled={busyId === lesson.materialId || registered.has(lesson.materialId)} onClick={() => openInPersonEnrollment(lesson)}>
+                    {registered.has(lesson.materialId) ? t('Đã đăng ký') : t('Đăng ký trực tiếp')}
+                  </button>
+                  <button className="secondary-btn learner-enroll-button" type="button" disabled title={t('Đăng ký trực tuyến sẽ sớm được mở.')}>
+                    {t('Đăng ký trực tuyến')} · {t('Sắp có')}
+                  </button>
+                </div>
+                {enrollmentLessonId === lesson.materialId ? (
+                  <form className="lesson-enrollment-form" onSubmit={(event) => enroll(event, lesson)}>
+                    <label htmlFor={`enrollment-key-${lesson.materialId}`}>{t('Enrollment key')}</label>
+                    <input
+                      id={`enrollment-key-${lesson.materialId}`}
+                      type="text"
+                      autoComplete="one-time-code"
+                      maxLength={64}
+                      required
+                      value={enrollmentKey}
+                      onChange={(event) => setEnrollmentKey(event.target.value)}
+                      placeholder={t('Nhập mã do quản trị viên cung cấp')}
+                    />
+                    <div className="teacher-message-actions">
+                      <button type="button" className="secondary-btn" onClick={() => { setEnrollmentLessonId(''); setEnrollmentKey(''); }}>{t('Hủy')}</button>
+                      <button className="feature-action" type="submit" disabled={busyId === lesson.materialId}>
+                        {busyId === lesson.materialId ? t('Đang đăng ký…') : t('Xác nhận đăng ký')}
+                      </button>
+                    </div>
+                  </form>
+                ) : null}
               </article>)}
             </div>}
           </>
