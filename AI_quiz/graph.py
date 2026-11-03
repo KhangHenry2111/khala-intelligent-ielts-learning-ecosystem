@@ -30,6 +30,7 @@ import json
 import uuid
 import configparser
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from pathlib import Path
 from typing import Dict, List, Any, Optional, TypedDict, Union
@@ -209,8 +210,11 @@ class QuizState(TypedDict):
     raw_input: Union[str, bytes]
     raw_input_name: Optional[str]    # Original file name (helps extract_document_text pick a parser)
     input_type: str                  # "text" | "image" | "pdf"
+    generation_mode: str             # "topic" | "source"
     selected_skill: str              # "Reading" | "Speaking" | "Writing" | "Listening" | "All"
     selected_question_type: Optional[str]
+    target_question_count: Optional[int]
+    question_type_streams: List[Dict[str, Any]]
     selected_question_type_skill: Optional[str]
     question_type_description: str
     question_type_instruction: str
@@ -398,12 +402,26 @@ def guardrail_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: guardrail_check", {"skill": state.get("selected_skill", "Reading")})
     text = state.get("extracted_text", "")
     skill = state.get("selected_skill", "Reading")
+    topic_mode = state.get("generation_mode") == "topic"
+    prompt = (
+        "Review the supplied user topic for safe use as an IELTS practice subject. "
+        "Accept concise or unfamiliar academic topics when safe. Reject unsafe or malicious input. "
+        'Return JSON only: {"is_safe": true|false, "is_relevant": true|false, "passed": true|false, "reason": "..."}.'
+        if topic_mode else None
+    )
 
     check = None
     if state.get("llm") is not None:
         for attempt in range(3):
             try:
-                check = guardrail_check(question=text, answer="", skill=skill, llm=state.get("llm"))
+                check = guardrail_check(
+                    question=text,
+                    answer="",
+                    skill=skill,
+                    llm=state.get("llm"),
+                    prompt=prompt or tool.GUARDRAIL_PROMPT,
+                    allow_topic=topic_mode,
+                )
                 break
             except Exception as exc:
                 if attempt < 2:
@@ -412,7 +430,14 @@ def guardrail_node(state: QuizState) -> Dict[str, Any]:
                 else:
                     logger.warning("Guardrail LLM call failed (%s); falling back to local check.", exc)
     if check is None:
-        check = guardrail_check(question=text, answer="", skill=skill, llm=None)
+        check = guardrail_check(
+            question=text,
+            answer="",
+            skill=skill,
+            llm=None,
+            prompt=prompt or tool.GUARDRAIL_PROMPT,
+            allow_topic=topic_mode,
+        )
 
     _trace("GUARDRAIL RESULT", check)
 
@@ -720,10 +745,88 @@ def _canonical_skill(name: Any) -> Optional[str]:
     return next((k for k in _ALL_SKILLS if k.lower() == s), None)
 
 
+def _validate_question_type_plan(plan: Dict[str, Any], skill: str, total_count: int) -> List[Dict[str, Any]]:
+    streams = plan.get("streams")
+    if not isinstance(streams, list) or not 2 <= len(streams) <= 5:
+        raise ValueError("The model must select between 2 and 5 question-type streams.")
+
+    allowed = {
+        code for code, details in _QUESTION_TYPE_DETAILS.items()
+        if skill in details["skills"]
+    }
+    normalized = []
+    seen = set()
+    for stream in streams:
+        if not isinstance(stream, dict):
+            raise ValueError("Each question-type stream must be an object.")
+        code = str(stream.get("question_type") or "").strip().upper()
+        count = stream.get("question_count")
+        if code not in allowed or code in seen:
+            raise ValueError(f"The model selected an unsupported or duplicate question type: {code}.")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 4:
+            raise ValueError("Each question-type stream must contain at least 4 questions.")
+        normalized.append({"question_type": code, "question_count": count})
+        seen.add(code)
+
+    if sum(stream["question_count"] for stream in normalized) != total_count:
+        raise ValueError(f"Question-type stream counts must total exactly {total_count}.")
+    return normalized
+
+
+def _plan_question_type_streams(state: QuizState, skill: str, total_count: int) -> List[Dict[str, Any]]:
+    llm = state.get("llm")
+    if llm is None:
+        raise RuntimeError("LLM is not configured; cannot plan question-type streams.")
+
+    choices = [
+        {"code": code, "description": details["description"]}
+        for code, details in _QUESTION_TYPE_DETAILS.items()
+        if skill in details["skills"]
+    ]
+    prompt = (
+        "Plan IELTS question generation streams for the supplied topic and source. "
+        "Choose 2 to 5 distinct compatible question types from the catalog and allocate "
+        f"at least 4 questions to each, totaling exactly {total_count}. "
+        'Return JSON only as {"streams":[{"question_type":"CATALOG_CODE","question_count":8}]} .\n'
+        f"Skill: {skill}\nTopic: {state.get('detected_topic', '')}\n"
+        f"Source summary: {state.get('summary', '')}\n"
+        f"Question type catalog: {json.dumps(choices, ensure_ascii=False)}"
+    )
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            raw_plan = tool._invoke_llm(llm, prompt, skill=skill, topic=state.get("detected_topic", ""))
+            plan = _parse_llm_json_payload(raw_plan)
+            streams = _validate_question_type_plan(plan, skill, total_count)
+            _trace("QUESTION TYPE STREAM PLAN", streams)
+            return streams
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Question-type planning failed (attempt %d/3): %s", attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(2)
+    raise RuntimeError(f"Question-type planning failed after 3 attempts: {last_error}")
+
+
 @_node_guard("question_type_node")
 def question_type_node(state: QuizState) -> Dict[str, Any]:
     """Resolve the requested IELTS question format into detailed generation guidance."""
     skill = _canonical_skill(state.get("selected_skill"))
+    target_count = state.get("target_question_count")
+    if target_count is not None:
+        if skill not in ("Reading", "Listening"):
+            raise ValueError("40-question IELTS type streams are supported for Reading or Listening only.")
+        if target_count != 40:
+            raise ValueError("Multi-stream IELTS quizzes must contain exactly 40 questions.")
+        return {
+            "selected_question_type": None,
+            "selected_question_type_skill": skill,
+            "question_type_description": "",
+            "question_type_instruction": "",
+            "question_type_streams": _plan_question_type_streams(state, skill, target_count),
+        }
+
     if skill not in ("Reading", "Listening"):
         # Speaking / Writing / All: no single question type applies
         return {
@@ -731,6 +834,7 @@ def question_type_node(state: QuizState) -> Dict[str, Any]:
             "selected_question_type_skill": None,
             "question_type_description": "",
             "question_type_instruction": "",
+            "question_type_streams": [],
         }
 
     code = str(state.get("selected_question_type") or "MULTIPLE_CHOICE_SINGLE").strip().upper()
@@ -743,6 +847,7 @@ def question_type_node(state: QuizState) -> Dict[str, Any]:
         "selected_question_type_skill": skill,
         "question_type_description": details["description"],
         "question_type_instruction": details["instruction"],
+        "question_type_streams": [],
     }
 
 
@@ -986,6 +1091,8 @@ def _build_skill_prompt(
     key_concepts = context_bundle.get("key_concepts", [])
     source_preview = context_bundle.get("source_text_preview", "")
     question_type_code = context_bundle.get("question_type_code") or "MULTIPLE_CHOICE_SINGLE"
+    expected_question_count = context_bundle.get("expected_question_count")
+    question_source = context_bundle.get("question_source")
 
     key_concepts_str = ", ".join(key_concepts) if key_concepts else "N/A"
 
@@ -1002,11 +1109,17 @@ def _build_skill_prompt(
         f"Target Level: {level}\n"
         f"User Tier: {tier}\n"
         f"Source Text Preview:\n{source_preview}\n\n"
-        f"--- PRIOR GENERATED CONTENT (avoid duplicating these) ---\n"
+        + (f"Authoritative passage/transcript for this stream (do not change or add facts):\n{question_source}\n\n" if question_source else "")
+        + f"--- PRIOR GENERATED CONTENT (avoid duplicating these) ---\n"
         f"{prior_context_str}\n\n"
         f"--- TASK ---\n"
     )
 
+    question_count_instruction = (
+        f'      ]  // Include exactly {expected_question_count} questions\n'
+        if expected_question_count else
+        '      ]  // Include at least 4 questions\n'
+    )
     question_group_schema = (
         '  "QuestionGroups": [\n'
         '    {\n'
@@ -1022,12 +1135,20 @@ def _build_skill_prompt(
         '          "CorrectAnswer": string,  // e.g. "A" (multi-answer: "A,C")\n'
         '          "Explanation": string     // Brief reason\n'
         '        }\n'
-        '      ]  // Include at least 4 questions\n'
-        '    }\n'
-        '  ]\n'
+        + question_count_instruction
+        + '    }\n'
+        + '  ]\n'
     )
 
     if skill_name == "Reading":
+        if question_source:
+            return (
+                base + _format_guidance(context_bundle, skill_name) +
+                f"Generate one question group with exactly {expected_question_count} questions, all answerable only from the authoritative passage. "
+                "Do not generate or modify a passage. Return JSON using this schema:\n{\n"
+                '  "Title": string,\n  "Skill": "Reading",\n  "Level": string,\n'
+                + question_group_schema + "}"
+            )
         return (
             base +
             _format_guidance(context_bundle, skill_name) +
@@ -1046,6 +1167,14 @@ def _build_skill_prompt(
         )
 
     if skill_name == "Listening":
+        if question_source:
+            return (
+                base + _format_guidance(context_bundle, skill_name) +
+                f"Generate one question group with exactly {expected_question_count} questions, all answerable only from the authoritative transcript. "
+                "Do not generate or modify a transcript. Return JSON using this schema:\n{\n"
+                '  "Title": string,\n  "Skill": "Listening",\n  "Level": string,\n'
+                + question_group_schema + "}"
+            )
         return (
             base +
             _format_guidance(context_bundle, skill_name) +
@@ -1109,7 +1238,14 @@ def _build_skill_prompt(
 # --------------------------------------------------------------------------
 # Core LLM Generation with Context (validated, no placeholder fallback)
 # --------------------------------------------------------------------------
-def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, Any]:
+def _generate_llm_skill_payload(
+    state: QuizState,
+    skill_name: str,
+    question_type_code: Optional[str] = None,
+    expected_question_count: Optional[int] = None,
+    question_source: Optional[str] = None,
+    canonical_source: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     """
     Call the LLM with a context-aware prompt for the given skill and validate the result.
     Raises RuntimeError if the LLM is unavailable or output stays invalid after 3 attempts;
@@ -1132,15 +1268,20 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
         key_concepts=state.get("key_concepts", []),
     ))
 
-    selected_question_type = None
-    if state.get("selected_question_type_skill") == skill_name:
+    selected_question_type = question_type_code
+    if selected_question_type is None and state.get("selected_question_type_skill") == skill_name:
         selected_question_type = state.get("selected_question_type")
+    if selected_question_type:
         context_bundle.update({
             "question_type_skill": skill_name,
             "question_type_code": selected_question_type,
-            "question_type_description": state.get("question_type_description", ""),
-            "question_type_instruction": state.get("question_type_instruction", ""),
+            "question_type_description": _QUESTION_TYPE_DETAILS[selected_question_type]["description"],
+            "question_type_instruction": _QUESTION_TYPE_DETAILS[selected_question_type]["instruction"],
         })
+    if expected_question_count is not None:
+        context_bundle["expected_question_count"] = expected_question_count
+        context_bundle["question_source"] = question_source
+        context_bundle["source_text_preview"] = question_source[:4000]
 
     prompt = _build_skill_prompt(skill_name, context_bundle, _compact_prior_context(state))
 
@@ -1153,11 +1294,16 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
                 skill=skill_name,
                 topic=topic,
                 # The prompt already has a preview; cap the full text to limit tokens.
-                source_text=source_text[:4000],
+                source_text=(question_source or source_text)[:4000],
                 target_level=target_level,
                 user_tier=state.get("user_tier", "Gold"),
             )
             parsed = _parse_llm_json_payload(raw_payload)
+            if canonical_source:
+                if skill_name == "Reading":
+                    parsed["Passage"] = canonical_source
+                else:
+                    parsed["ListeningSection"] = canonical_source
             result = _normalize_and_validate_payload(
                 skill_name,
                 parsed,
@@ -1165,6 +1311,14 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
                 target_level,
                 selected_question_type=selected_question_type,
             )
+            if expected_question_count is not None:
+                groups = result.get("QuestionGroups", [])
+                actual_count = sum(len(group.get("Questions", [])) for group in groups)
+                if len(groups) != 1 or actual_count != expected_question_count:
+                    raise ValueError(
+                        f"{selected_question_type} stream must return one group with exactly "
+                        f"{expected_question_count} questions; got {actual_count} across {len(groups)} groups."
+                    )
             _trace(f"LLM {skill_name.upper()} RESULT", {
                 "title": result.get("Title"),
                 "question_count": sum(
@@ -1182,13 +1336,116 @@ def _generate_llm_skill_payload(state: QuizState, skill_name: str) -> Dict[str, 
     raise RuntimeError(f"{skill_name} generation failed after 3 attempts: {last_exc}")
 
 
+def _generate_shared_question_source(state: QuizState, skill_name: str) -> Dict[str, Any]:
+    llm = state.get("llm")
+    if llm is None:
+        raise RuntimeError("LLM is not configured; cannot generate quiz source material.")
+
+    topic = state.get("detected_topic") or state.get("cleaned_text", "")
+    level = state.get("target_level", "Band 7.0 - 7.5")
+    source = state.get("cleaned_text", "")[:4000]
+    mode_instruction = (
+        "Treat the supplied text as a topic, not as a source passage. Write original, internally consistent IELTS practice material about it."
+        if state.get("generation_mode") == "topic" else
+        "Use the supplied source material as the factual basis. Do not invent specific facts that conflict with it."
+    )
+    if skill_name == "Reading":
+        field_instruction = 'Return JSON only: {"Title": string, "Content": string, "Topic": string}.'
+        source_instruction = "Write a coherent Academic Reading passage of 650-850 words."
+    else:
+        field_instruction = 'Return JSON only: {"Title": string, "Transcript": string}.'
+        source_instruction = "Write a realistic IELTS Listening dialogue or monologue transcript of 600-800 words."
+    prompt = (
+        f"Create genuine IELTS {skill_name} source material for a 40-question assessment. "
+        f"{mode_instruction} {source_instruction} Keep the language appropriate for {level}. "
+        "Do not include questions, answers, sample data, or placeholders.\n"
+        f"Topic: {topic}\nSource material: {source}\n{field_instruction}"
+    )
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            raw = tool._invoke_llm(llm, prompt, skill=skill_name, topic=topic, source_text=source)
+            payload = _parse_llm_json_payload(raw)
+            if skill_name == "Reading":
+                material = payload.get("Passage") if isinstance(payload.get("Passage"), dict) else payload
+                content = _require_text(material.get("Content"), "Passage.Content", min_words=450)
+                return {
+                    "Title": str(material.get("Title") or f"Academic Reading: {topic}"),
+                    "Content": content,
+                    "Topic": str(material.get("Topic") or topic),
+                }
+            section = payload.get("ListeningSection") if isinstance(payload.get("ListeningSection"), dict) else payload
+            transcript = _require_text(section.get("Transcript"), "ListeningSection.Transcript", min_words=450)
+            return {"Transcript": transcript}
+        except Exception as exc:
+            last_error = exc
+            logger.warning("Shared %s source generation failed (attempt %d/3): %s", skill_name, attempt + 1, exc)
+            if attempt < 2:
+                time.sleep(2)
+    raise RuntimeError(f"Shared {skill_name} source generation failed after 3 attempts: {last_error}")
+
+
+def _generate_multi_stream_payload(state: QuizState, skill_name: str) -> Dict[str, Any]:
+    streams = state.get("question_type_streams") or []
+    if not streams:
+        raise RuntimeError("The model did not provide a question-type stream plan.")
+
+    source = _generate_shared_question_source(state, skill_name)
+    source_text = source["Content"] if skill_name == "Reading" else source["Transcript"]
+    canonical_source = (
+        {
+            "Title": source["Title"],
+            "Content": source_text,
+            "Topic": source["Topic"],
+        }
+        if skill_name == "Reading" else {"Transcript": source_text}
+    )
+
+    def generate_stream(stream: Dict[str, Any]) -> Dict[str, Any]:
+        return _generate_llm_skill_payload(
+            state,
+            skill_name,
+            question_type_code=stream["question_type"],
+            expected_question_count=stream["question_count"],
+            question_source=source_text,
+            canonical_source=canonical_source,
+        )
+
+    with ThreadPoolExecutor(max_workers=len(streams)) as executor:
+        generated = list(executor.map(generate_stream, streams))
+
+    question_groups = [payload["QuestionGroups"][0] for payload in generated]
+    _validate_question_groups(question_groups)
+    expected_count = state.get("target_question_count")
+    actual_count = sum(len(group.get("Questions", [])) for group in question_groups)
+    if actual_count != expected_count:
+        raise ValueError(f"Expected exactly {expected_count} questions; generated {actual_count}.")
+
+    result: Dict[str, Any] = {
+        "Title": state.get("quiz_title") or generated[0].get("Title") or f"IELTS {skill_name}: {state.get('detected_topic', '')}",
+        "Skill": skill_name,
+        "Level": state.get("target_level", "Band 7.0 - 7.5"),
+        "QuestionGroups": question_groups,
+    }
+    if skill_name == "Reading":
+        result["Passage"] = source
+    else:
+        result["ListeningSection"] = source
+    return result
+
+
 # --------------------------------------------------------------------------
 # Teacher Nodes
 # --------------------------------------------------------------------------
 @_node_guard("reading_teacher_node")
 def reading_teacher_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: reading_teacher_node")
-    payload = _generate_llm_skill_payload(state, "Reading")
+    payload = (
+        _generate_multi_stream_payload(state, "Reading")
+        if state.get("target_question_count") else
+        _generate_llm_skill_payload(state, "Reading")
+    )
     _print_ai_answer("Reading teacher output", payload)
     return {"reading_result": payload}
 
@@ -1228,7 +1485,11 @@ def writing_teacher_node(state: QuizState) -> Dict[str, Any]:
 @_node_guard("listening_teacher_node")
 def listening_teacher_node(state: QuizState) -> Dict[str, Any]:
     _trace("TOOL CALLED: listening_teacher_node")
-    payload = _generate_llm_skill_payload(state, "Listening")
+    payload = (
+        _generate_multi_stream_payload(state, "Listening")
+        if state.get("target_question_count") else
+        _generate_llm_skill_payload(state, "Listening")
+    )
     _print_ai_answer("Listening teacher output", payload)
     return {"listening_result": payload}
 
@@ -1269,6 +1530,19 @@ def backend_sync_node(state: QuizState) -> Dict[str, Any]:
     speaking = state.get("speaking_result")
     writing = state.get("writing_result")
     listening = state.get("listening_result")
+
+    expected_count = state.get("target_question_count")
+    if expected_count is not None:
+        actual_count = sum(
+            len(group.get("Questions", []))
+            for result in (reading, listening) if result
+            for group in result.get("QuestionGroups", [])
+        )
+        if actual_count != expected_count:
+            return {
+                "status": "ERROR",
+                "error_message": f"Expected exactly {expected_count} questions; generated {actual_count}.",
+            }
 
     # Combine question groups (Reading first, then Listening)
     consolidated_groups: List[Dict[str, Any]] = []
@@ -1479,6 +1753,8 @@ def run_quiz_pipeline(
     tool_params: Optional[Dict[str, Any]] = None,
     allowed_skills: Optional[List[str]] = None,
     selected_question_type: Optional[str] = None,
+    generation_mode: str = "source",
+    target_question_count: Optional[int] = None,
     raw_input_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
@@ -1490,6 +1766,7 @@ def run_quiz_pipeline(
     when omitted only Reading and Listening are allowed.
     """
     _trace("PIPELINE START", {"skill": selected_skill, "tier": user_tier, "input_type": input_type,
+                              "generation_mode": generation_mode, "target_question_count": target_question_count,
                               "allowed_skills": allowed_skills})
     if llm is None:
         llm = _load_default_llm()
@@ -1497,8 +1774,11 @@ def run_quiz_pipeline(
         "raw_input": raw_input,
         "raw_input_name": raw_input_name,
         "input_type": input_type,
+        "generation_mode": generation_mode,
         "selected_skill": selected_skill,
         "selected_question_type": selected_question_type,
+        "target_question_count": target_question_count,
+        "question_type_streams": [],
         "selected_question_type_skill": None,
         "question_type_description": "",
         "question_type_instruction": "",

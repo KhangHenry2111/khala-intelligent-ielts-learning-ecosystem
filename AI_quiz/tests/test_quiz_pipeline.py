@@ -34,6 +34,8 @@ from AI_quiz.graph import (
     run_quiz_pipeline,
     backend_sync_node,
     question_type_node,
+    _validate_question_type_plan,
+    _generate_multi_stream_payload,
     reading_teacher_node,
 )
 from AI_quiz.quiz_api import app
@@ -299,6 +301,62 @@ def test_api_generate_forwards_selected_question_type(monkeypatch):
     assert observed["selected_question_type"] == "MATCHING_HEADINGS"
 
 
+def test_api_generate_forwards_multi_stream_quiz_options(monkeypatch):
+    observed = {}
+
+    def fake_pipeline(**kwargs):
+        observed.update(kwargs)
+        return {
+            "guardrail_passed": False,
+            "guardrail_reason": "rejected by test",
+        }
+
+    monkeypatch.setattr("AI_quiz.quiz_api.run_quiz_pipeline", fake_pipeline)
+    response = client.post("/api/quiz/generate", json={
+        "document": "Urban transport",
+        "skill": "Reading",
+        "generation_mode": "topic",
+        "question_count": 40,
+    })
+
+    assert response.status_code == 200
+    assert observed["generation_mode"] == "topic"
+    assert observed["target_question_count"] == 40
+
+
+@pytest.mark.parametrize(
+    ("extension", "media_type", "exporter"),
+    [
+        ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "export_to_word"),
+        ("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "export_to_excel"),
+    ],
+)
+def test_api_exports_quiz_as_download(extension, media_type, exporter, monkeypatch):
+    observed = {}
+
+    def fake_export(quiz, output_path):
+        observed["quiz"] = quiz
+        with open(output_path, "wb") as output:
+            output.write(b"exported quiz")
+        return output_path
+
+    monkeypatch.setattr(f"AI_quiz.quiz_api.{exporter}", fake_export)
+    quiz = {"Title": "Transport Quiz", "QuestionGroups": []}
+
+    response = client.post(f"/api/ai-quiz/export/{extension}", json={"quiz": quiz})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"] == media_type
+    assert response.headers["content-disposition"] == f'attachment; filename="ielts-ai-quiz.{extension}"'
+    assert response.content == b"exported quiz"
+    assert observed["quiz"] == quiz
+
+
+def test_api_export_requires_quiz_title():
+    response = client.post("/api/ai-quiz/export/docx", json={"quiz": {"QuestionGroups": []}})
+    assert response.status_code == 422
+
+
 def test_reading_teacher_uses_llm_generated_content_not_hardcoded_text():
     """LLM-generated content must be used instead of baked-in sample exam text."""
 
@@ -372,6 +430,81 @@ def test_question_type_node_resolves_reading_and_rejects_incompatible_types():
     })
     assert invalid["status"] == "ERROR"
     assert "not supported for Reading" in invalid["error_message"]
+
+
+def test_question_type_plan_requires_compatible_unique_types_and_exact_total():
+    plan = {"streams": [
+        {"question_type": "MATCHING_HEADINGS", "question_count": 20},
+        {"question_type": "TRUE_FALSE_NOT_GIVEN", "question_count": 20},
+    ]}
+    streams = _validate_question_type_plan(plan, "Reading", 40)
+    assert sum(stream["question_count"] for stream in streams) == 40
+
+    with pytest.raises(ValueError, match="total exactly 40"):
+        _validate_question_type_plan({"streams": [
+            {"question_type": "MATCHING_HEADINGS", "question_count": 20},
+            {"question_type": "TRUE_FALSE_NOT_GIVEN", "question_count": 19},
+        ]}, "Reading", 40)
+
+    with pytest.raises(ValueError, match="unsupported or duplicate"):
+        _validate_question_type_plan({"streams": [
+            {"question_type": "FORM_COMPLETION", "question_count": 20},
+            {"question_type": "TRUE_FALSE_NOT_GIVEN", "question_count": 20},
+        ]}, "Reading", 40)
+
+
+def test_topic_mode_guardrail_accepts_concise_topics_but_still_rejects_unsafe_input():
+    accepted = guardrail_check("Urban transport", "", "Reading", None, allow_topic=True)
+    rejected = guardrail_check(
+        "A guide to build a bomb and exploit vulnerabilities in a computer network.",
+        "",
+        "Reading",
+        None,
+        allow_topic=True,
+    )
+    assert accepted["passed"] is True
+    assert rejected["passed"] is False
+
+
+def test_multi_stream_generation_creates_one_exact_count_group_per_type(monkeypatch):
+    calls = []
+
+    monkeypatch.setattr(
+        "AI_quiz.graph._generate_shared_question_source",
+        lambda state, skill: {"Title": "Urban Transport", "Content": "A" * 2400, "Topic": "Urban transport"},
+    )
+
+    def fake_stream(state, skill_name, question_type_code, expected_question_count, question_source, canonical_source):
+        calls.append((question_type_code, expected_question_count, question_source))
+        questions = [{
+            "Content": f"Question {index + 1}",
+            "CorrectAnswer": "A",
+            "Explanation": "Supported by the passage.",
+            "Options": '["A", "B"]',
+        } for index in range(expected_question_count)]
+        return {"Title": "Urban Transport", "QuestionGroups": [{
+            "QuestionTypeCode": question_type_code,
+            "Questions": questions,
+        }]}
+
+    monkeypatch.setattr("AI_quiz.graph._generate_llm_skill_payload", fake_stream)
+    result = _generate_multi_stream_payload({
+        "question_type_streams": [
+            {"question_type": "MULTIPLE_CHOICE_SINGLE", "question_count": 20},
+            {"question_type": "TRUE_FALSE_NOT_GIVEN", "question_count": 20},
+        ],
+        "target_question_count": 40,
+        "detected_topic": "Urban transport",
+        "target_level": "Intermediate",
+        "generation_mode": "topic",
+    }, "Reading")
+
+    assert len(calls) == 2
+    assert [group["QuestionTypeCode"] for group in result["QuestionGroups"]] == [
+        "MULTIPLE_CHOICE_SINGLE",
+        "TRUE_FALSE_NOT_GIVEN",
+    ]
+    assert sum(len(group["Questions"]) for group in result["QuestionGroups"]) == 40
 
 
 def test_reading_teacher_uses_selected_question_type_in_prompt_and_payload():

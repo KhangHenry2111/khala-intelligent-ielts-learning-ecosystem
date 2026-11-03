@@ -4,7 +4,6 @@ import { useAuth } from '../../../shared/auth/AuthContext';
 import { useLanguage } from '../../../shared/i18n/LanguageContext';
 import { userRank } from '../../../shared/lib/roles';
 import { FeatureShell } from '../../../shared/ui/FeatureShell';
-import { getQuestionTypesForSkill } from '../../teacher/lessons/questionTypes';
 import { QuizGeneratorForm } from './components/QuizGeneratorForm';
 import { QuizPreview } from './components/QuizPreview';
 
@@ -14,7 +13,7 @@ export function AiQuizPage() {
   const { user } = useAuth();
   const { t } = useLanguage();
   const [skill, setSkill] = useState('Reading');
-  const [questionType, setQuestionType] = useState('MULTIPLE_CHOICE_SINGLE');
+  const [generationMode, setGenerationMode] = useState('topic');
   const [difficulty, setDifficulty] = useState('Intermediate');
   const [content, setContent] = useState('');
   const [file, setFile] = useState(null);
@@ -23,7 +22,6 @@ export function AiQuizPage() {
 
   function handleSkillChange(nextSkill) {
     setSkill(nextSkill);
-    setQuestionType(getQuestionTypesForSkill(nextSkill)[0]?.code || '');
   }
 
   async function submitQuiz(event) {
@@ -31,23 +29,17 @@ export function AiQuizPage() {
     setStatus('Checking the document and generating a quiz...');
     setQuiz(null);
     try {
-      const payload = file
-        ? {
-            document: `data:${file.fileType};base64,${file.contentBase64}`,
-            input_type: 'image',
-            skill: skill === 'All' ? 'All' : skill,
-            question_type: questionType || null,
-            tier: user?.rank || user?.details?.Rank || 'Bronze',
-            user_id: user?.id || null,
-          }
-        : {
-            document: content,
-            input_type: 'text',
-            skill: skill === 'All' ? 'All' : skill,
-            question_type: questionType || null,
-            tier: user?.rank || user?.details?.Rank || 'Bronze',
-            user_id: user?.id || null,
-          };
+      const payload = {
+        document: file
+          ? `data:${file.fileType};base64,${file.contentBase64}`
+          : content,
+        input_type: file ? 'image' : 'text',
+        skill,
+        generation_mode: file ? 'source' : generationMode,
+        question_count: 40,
+        tier: user?.rank || user?.details?.Rank || 'Bronze',
+        user_id: user?.id || null,
+      };
       const result = await aiQuizApi.generate(payload, user);
       setQuiz(result.data?.quiz_preview || result.quiz || result.data);
       setStatus(result.message || 'Quiz generated and awaiting review.');
@@ -75,12 +67,25 @@ export function AiQuizPage() {
     const selected = event.target.files?.[0];
     if (!selected) return;
     const reader = new FileReader();
+    if (!selected.type.startsWith('image/')) {
+      reader.onload = () => {
+        setContent(String(reader.result || ''));
+        setFile(null);
+      };
+      reader.readAsText(selected);
+      return;
+    }
     reader.onload = () => setFile({
       fileName: selected.name,
       fileType: selected.type || 'text/plain',
       contentBase64: String(reader.result).split(',').pop(),
     });
     reader.readAsDataURL(selected);
+  }
+
+  function handleGenerationModeChange(nextMode) {
+    setGenerationMode(nextMode);
+    setFile(null);
   }
 
   return (
@@ -99,13 +104,13 @@ export function AiQuizPage() {
       ) : (
         <QuizGeneratorForm
           skill={skill}
-          questionType={questionType}
+          generationMode={generationMode}
           difficulty={difficulty}
           content={content}
           status={t(status)}
           file={file}
           onSkillChange={handleSkillChange}
-          onQuestionTypeChange={setQuestionType}
+          onGenerationModeChange={handleGenerationModeChange}
           onDifficultyChange={setDifficulty}
           onContentChange={setContent}
           onFileChange={handleFileChange}

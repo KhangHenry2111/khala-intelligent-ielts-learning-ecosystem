@@ -8,7 +8,9 @@ import os
 import sys
 import json
 import logging
-from typing import Optional, List, Dict, Any
+import tempfile
+from pathlib import Path
+from typing import Optional, List, Dict, Any, Literal
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -23,6 +25,7 @@ logger = logging.getLogger("ielts.ai_quiz")
 
 # Import the LangGraph runner
 from .graph import run_quiz_pipeline
+from .tools import export_to_word, export_to_excel
 
 
 def _safe_request_for_log(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -70,6 +73,16 @@ class GenerateQuizRequest(BaseModel):
         default=None,
         description="Optional IELTS Reading or Listening question format code."
     )
+    generation_mode: Literal["topic", "source"] = Field(
+        default="source",
+        description="Generate source material from a topic, or use supplied source material."
+    )
+    question_count: Optional[int] = Field(
+        default=None,
+        ge=40,
+        le=40,
+        description="Total question count for model-planned question-type streams."
+    )
     tier: str = Field(
         default="Gold",
         description="User tier: 'Bronze' / 'Đồng', 'Silver' / 'Bạc', or 'Gold' / 'Vàng'."
@@ -111,6 +124,10 @@ class DirectSaveQuizRequest(BaseModel):
         ...,
         description="Raw quiz payload object in the backend SQL insert schema."
     )
+
+
+class ExportQuizRequest(BaseModel):
+    quiz: Dict[str, Any] = Field(..., description="Generated quiz payload to export.")
 
 
 # --------------------------------------------------------------------------
@@ -155,6 +172,35 @@ def get_supported_tiers():
             {"tier": "Gold", "vn_name": "Vàng", "allowed_skills": ["Reading", "Listening", "Speaking", "Writing", "All"], "limit": 250}
         ]
     }
+
+
+@app.post("/api/ai-quiz/export/{extension}", tags=["Quiz Export"])
+def export_ai_quiz(extension: Literal["docx", "xlsx"], req: ExportQuizRequest):
+    quiz = req.quiz
+    if not str(quiz.get("Title") or quiz.get("title") or "").strip():
+        raise HTTPException(status_code=422, detail="quiz.Title is required.")
+    if not isinstance(quiz.get("QuestionGroups") or quiz.get("questionGroups") or [], list):
+        raise HTTPException(status_code=422, detail="quiz.QuestionGroups must be an array.")
+
+    content_types = {
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }
+    exporter = export_to_word if extension == "docx" else export_to_excel
+    try:
+        with tempfile.TemporaryDirectory(prefix="ielts-quiz-export-") as temp_dir:
+            output_path = Path(temp_dir) / f"ielts-ai-quiz.{extension}"
+            exporter(quiz, str(output_path))
+            file_content = output_path.read_bytes()
+    except Exception as exc:
+        logger.exception("[AI TRACE] QUIZ EXPORT ERROR")
+        raise HTTPException(status_code=500, detail=f"Unable to export quiz: {exc}") from exc
+
+    return Response(
+        content=file_content,
+        media_type=content_types[extension],
+        headers={"Content-Disposition": f'attachment; filename="ielts-ai-quiz.{extension}"'},
+    )
 
 
 @app.post("/api/quiz/save-json", tags=["Quiz Generation"])
@@ -213,6 +259,8 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
             raw_input=req.document,
             selected_skill=req.skill,
             selected_question_type=req.question_type,
+            generation_mode=req.generation_mode,
+            target_question_count=req.question_count,
             input_type=req.input_type,
             user_tier=req.tier,
             user_id=req.user_id,
@@ -265,7 +313,7 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
             success=True,
             status=pipeline_status,
             step=5,
-            message="Đã tạo đề thi IELTS thành công, lưu database (trạng thái chờ kiểm duyệt) và xuất tài liệu Word/Excel." + (" (Chế độ giả lập/mock)" if pipeline_status == "SUCCESS_DEGRADED" else ""),
+            message="Đã tạo đề thi IELTS thành công, lưu database (trạng thái chờ kiểm duyệt) và xuất tài liệu Word/Excel." + (" (Phân tích chủ đề dùng dự phòng cục bộ)" if pipeline_status == "SUCCESS_DEGRADED" else ""),
             data=response_data
         )
         logger.info("[AI TRACE] API RESPONSE JSON: %s", json.dumps(result.model_dump(), ensure_ascii=False, default=str)[:12000])

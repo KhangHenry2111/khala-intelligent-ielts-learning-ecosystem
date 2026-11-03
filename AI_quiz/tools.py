@@ -100,13 +100,14 @@ def _parse_llm_json(response: Any) -> Dict[str, Any]:
             "passed": bool(result["passed"]), "reason": str(result["reason"])}
 
 
-def _local_guardrail_fallback(question: str, answer: str, skill: str) -> Dict[str, Any]:
+def _local_guardrail_fallback(question: str, answer: str, skill: str, allow_topic: bool = False) -> Dict[str, Any]:
     """Fallback safety/relevance heuristic when no LLM is configured."""
     text = (question or "") + " " + (answer or "")
     normalized = re.sub(r"\s+", " ", text).strip()
     lowered = normalized.lower()
 
-    if not normalized or len(re.sub(r"[^a-z0-9]", "", lowered)) < 20:
+    minimum_length = 3 if allow_topic else 20
+    if not normalized or len(re.sub(r"[^a-z0-9]", "", lowered)) < minimum_length:
         return {"is_safe": False, "is_relevant": False, "passed": False, "reason": "Input is empty or unusable."}
 
     unsafe_patterns = [
@@ -117,6 +118,9 @@ def _local_guardrail_fallback(question: str, answer: str, skill: str) -> Dict[st
     ]
     if any(pattern in lowered for pattern in unsafe_patterns):
         return {"is_safe": False, "is_relevant": False, "passed": False, "reason": "Unsafe or malicious content detected."}
+
+    if allow_topic:
+        return {"is_safe": True, "is_relevant": True, "passed": True, "reason": "Topic passed the local safety check."}
 
     relevant_keywords = [
         "education", "student", "university", "school", "teacher", "learning", "research", "technology",
@@ -135,10 +139,10 @@ def _local_guardrail_fallback(question: str, answer: str, skill: str) -> Dict[st
     return {"is_safe": True, "is_relevant": True, "passed": True, "reason": "Content passed the local safety and relevance check."}
 
 
-def guardrail_check(question: str, answer: str, skill: str, llm: Any, prompt: str = GUARDRAIL_PROMPT) -> Dict[str, Any]:
+def guardrail_check(question: str, answer: str, skill: str, llm: Any, prompt: str = GUARDRAIL_PROMPT, allow_topic: bool = False) -> Dict[str, Any]:
     """Validate model-provided question and answer through the supplied LLM, with a local fallback when no model is configured."""
     if llm is None:
-        return _local_guardrail_fallback(question, answer, skill)
+        return _local_guardrail_fallback(question, answer, skill, allow_topic=allow_topic)
     try:
         response = _invoke_llm(llm, prompt, question=question, answer=answer, skill=skill)
         return _parse_llm_json(response)

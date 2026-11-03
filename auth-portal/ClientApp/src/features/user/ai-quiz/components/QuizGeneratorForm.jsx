@@ -1,50 +1,50 @@
 import { SkillPicker } from './SkillPicker';
-import { getQuestionTypesForSkill } from '../../../teacher/lessons/questionTypes';
 import { useLanguage } from '../../../../shared/i18n/LanguageContext';
 
 export function QuizGeneratorForm({
   skill,
-  questionType,
+  generationMode,
   difficulty,
   content,
   status,
   file,
   onSkillChange,
-  onQuestionTypeChange,
+  onGenerationModeChange,
   onDifficultyChange,
   onContentChange,
   onFileChange,
   onSubmit,
 }) {
   const { t } = useLanguage();
-  const questionTypes = getQuestionTypesForSkill(skill);
-  const selectedQuestionType = questionTypes.find(({ code }) => code === questionType) || questionTypes[0];
 
   return (
     <form className="quiz-generator" onSubmit={onSubmit}>
-      <SkillPicker value={skill} onChange={onSkillChange} />
-      {questionTypes.length > 0 && <>
-        <label htmlFor="ai-quiz-question-type">{t('IELTS question type')}</label>
-        <select
-          id="ai-quiz-question-type"
-          aria-describedby="ai-quiz-question-type-description"
-          value={selectedQuestionType?.code || ''}
-          onChange={(event) => onQuestionTypeChange(event.target.value)}
-        >
-          {questionTypes.map(({ code, label }) => <option value={code} key={code}>{label}</option>)}
-        </select>
-        {selectedQuestionType && <small id="ai-quiz-question-type-description" className="question-type-description">{selectedQuestionType.description}</small>}
-      </>}
+      <SkillPicker value={skill} onChange={onSkillChange} options={['Reading', 'Listening']} />
+      <div className="skill-picker" role="group" aria-label={t('Source mode')}>
+        {[
+          { value: 'topic', label: t('Generate from topic') },
+          { value: 'source', label: t('Use source material') },
+        ].map((option) => (
+          <button
+            className={generationMode === option.value ? 'selected' : ''}
+            key={option.value}
+            type="button"
+            onClick={() => onGenerationModeChange(option.value)}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
       <select value={difficulty} onChange={(event) => onDifficultyChange(event.target.value)} aria-label={t('Difficulty')}>
         <option value="Beginner">{t('Beginner')}</option>
         <option value="Intermediate">{t('Intermediate')}</option>
         <option value="Advanced">{t('Advanced')}</option>
       </select>
-      <input type="file" accept=".txt,.md,.csv,image/*" onChange={onFileChange} />
+      {generationMode === 'source' && <input type="file" accept=".txt,.md,.csv,image/*" onChange={onFileChange} />}
       <textarea
         value={content}
         onChange={(event) => onContentChange(event.target.value)}
-        placeholder={t('Paste IELTS content or upload a file...')}
+        placeholder={t(generationMode === 'topic' ? 'Enter a topic for your IELTS practice set...' : 'Paste source material or upload a file...')}
         rows="8"
         required={!file}
       />
