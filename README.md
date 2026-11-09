@@ -95,13 +95,13 @@ Cần: SQL Server LocalDB (hoặc instance tương đương), .NET SDK, Node.js 
 
 ### 1. Database
 
-Tạo database `IELTS` rồi chạy schema:
+Chạy schema để tạo database `IELTS` và các bảng:
 
 ```powershell
-sqlcmd -S "(localdb)\MSSQLLocalDB" -d IELTS -i SqlScripts.sql
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d master -i SqlScripts.sql
 ```
 
-Hoặc dùng launcher: `python main.py` → option 5.
+Schema script phải chạy trên `master` để có thể tạo database `IELTS` nếu database chưa tồn tại. Launcher (`python main.py` → option 5) chạy được bằng `sqlcmd` nếu đã cài; nếu chưa, nó dùng `pyodbc` và SQL Server ODBC Driver có sẵn để chạy script.
 
 Connection string đọc theo thứ tự:
 

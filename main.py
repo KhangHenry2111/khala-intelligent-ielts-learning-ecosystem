@@ -4,11 +4,18 @@ IELTS Study Assistant - Main Application Launcher
 Uses subprocess to manage and run various components
 """
 
+import configparser
 import os
+import shutil
 import socket
 import subprocess
 import sys
 from pathlib import Path
+
+try:
+    import pyodbc
+except ImportError:
+    pyodbc = None
 
 
 class IeltsAppLauncher:
@@ -308,12 +315,12 @@ class IeltsAppLauncher:
         if choice == "1":
             self.run_sql_script("auth-portal/Sql/InitUsers.sql", "Initialize Users")
         elif choice == "2":
-            self.run_sql_script("SqlScripts.sql", "Create Database Schema")
+            self.run_sql_script("SqlScripts.sql", "Create Database Schema", database="master")
         elif choice != "3":
             print("Invalid option")
 
-    def run_sql_script(self, script_name, description):
-        """Run a SQL script using sqlcmd."""
+    def run_sql_script(self, script_name, description, database="IELTS"):
+        """Run a SQL script with sqlcmd or the configured Python ODBC driver."""
         script_path = self.base_dir / script_name
 
         if not script_path.exists():
@@ -330,26 +337,165 @@ class IeltsAppLauncher:
             return
 
         try:
-            result = subprocess.run(
-                [
-                    "sqlcmd",
-                    "-S",
-                    "(localdb)\\MSSQLLocalDB",
-                    "-d",
-                    "IELTS",
-                    "-i",
-                    str(script_path),
-                ],
-                capture_output=False,
-            )
-            if result.returncode == 0:
-                print("\n✓ Script executed successfully")
+            if (
+                script_path.name.casefold() == "sqlscripts.sql"
+                and database.casefold() == "master"
+                and self._database_exists("Ielts")
+            ):
+                print("\n✓ Database Ielts already exists; schema initialization was skipped.")
+                return
+
+            sqlcmd = shutil.which("sqlcmd")
+            if sqlcmd:
+                result = subprocess.run(
+                    [
+                        sqlcmd,
+                        "-S",
+                        "(localdb)\\MSSQLLocalDB",
+                        "-d",
+                        database,
+                        "-i",
+                        str(script_path),
+                    ],
+                    capture_output=False,
+                )
+                if result.returncode == 0:
+                    print("\n✓ Script executed successfully")
+                else:
+                    print(f"\n✗ Script failed with exit code: {result.returncode}")
             else:
-                print(f"\n✗ Script failed with exit code: {result.returncode}")
-        except FileNotFoundError:
-            print("✗ sqlcmd not found. Install SQL Server Management Studio or SQL Server Express")
+                self._run_sql_script_with_pyodbc(script_path, database)
+                print("\n✓ Script executed successfully using Python ODBC")
         except Exception as e:
             print(f"✗ Error running script: {e}")
+
+    def _run_sql_script_with_pyodbc(self, script_path, database):
+        odbc_connection_string = self._build_odbc_connection_string(database)
+
+        raw_script = script_path.read_bytes()
+        encoding = "utf-16" if raw_script.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8-sig"
+        script = raw_script.decode(encoding)
+        batches = []
+        current_batch = []
+        for line in script.splitlines():
+            if line.strip().upper() == "GO":
+                if current_batch and "\n".join(current_batch).strip():
+                    batches.append("\n".join(current_batch))
+                current_batch = []
+            else:
+                current_batch.append(line)
+        if current_batch and "\n".join(current_batch).strip():
+            batches.append("\n".join(current_batch))
+
+        connection = pyodbc.connect(odbc_connection_string, autocommit=True)
+        try:
+            cursor = connection.cursor()
+            try:
+                for batch in batches:
+                    cursor.execute(batch)
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _build_odbc_connection_string(self, database, driver=None):
+        if pyodbc is None:
+            raise RuntimeError(
+                "sqlcmd is not installed and pyodbc is unavailable. "
+                "Install project dependencies with: python -m pip install -r requirements.txt"
+            )
+
+        if driver is None:
+            available_drivers = pyodbc.drivers()
+            driver = next(
+                (name for name in ("ODBC Driver 18 for SQL Server", "ODBC Driver 17 for SQL Server", "SQL Server")
+                 if name in available_drivers),
+                None,
+            )
+        if not driver:
+            raise RuntimeError("No SQL Server ODBC driver is installed.")
+
+        odbc_parts = [f"DRIVER={{{driver}}}"]
+        connection_options = {}
+        connection_string = self._get_sql_connection_string()
+        if not connection_string:
+            raise RuntimeError("No SQL Server connection string found in environment or config.cfg.")
+
+        for item in connection_string.split(";"):
+            key, separator, value = item.partition("=")
+            if not separator:
+                continue
+            key = key.strip().lower()
+            value = value.strip()
+            if key in ("data source", "server"):
+                connection_options["SERVER"] = value
+            elif key in ("initial catalog", "database"):
+                connection_options["DATABASE"] = database
+            elif key in ("integrated security", "trusted_connection"):
+                if value.lower() in ("true", "yes", "sspi"):
+                    connection_options["Trusted_Connection"] = "yes"
+            elif key in ("user id", "uid"):
+                connection_options["UID"] = value
+            elif key in ("password", "pwd"):
+                connection_options["PWD"] = value
+            elif key == "encrypt":
+                connection_options["Encrypt"] = "yes" if value.lower() in ("true", "yes") else "no"
+            elif key == "trustservercertificate":
+                connection_options["TrustServerCertificate"] = (
+                    "yes" if value.lower() in ("true", "yes") else "no"
+                )
+            elif key in ("connect timeout", "connection timeout"):
+                connection_options["Connection Timeout"] = value
+
+        connection_options.setdefault("DATABASE", database)
+        if "SERVER" not in connection_options:
+            raise RuntimeError("The SQL Server connection string does not specify a server.")
+        if "Trusted_Connection" not in connection_options and "UID" not in connection_options:
+            raise RuntimeError("The SQL Server connection string must specify integrated security or a user ID.")
+
+        def quote_odbc_value(value):
+            return "{" + value.replace("}", "}}") + "}"
+
+        odbc_parts.extend(
+            f"{key}={quote_odbc_value(value)}" for key, value in connection_options.items()
+        )
+        return ";".join(odbc_parts)
+
+    def _database_exists(self, database):
+        if pyodbc is None:
+            return False
+
+        connection = pyodbc.connect(
+            self._build_odbc_connection_string("master"),
+            autocommit=True,
+        )
+        try:
+            cursor = connection.cursor()
+            try:
+                row = cursor.execute("SELECT DB_ID(?)", database).fetchone()
+                return row is not None and row[0] is not None
+            finally:
+                cursor.close()
+        finally:
+            connection.close()
+
+    def _get_sql_connection_string(self):
+        for variable in (
+            "SQLSERVER_CONNECTION_STRING",
+            "ConnectionStrings__Default",
+            "USER_DB_CONNECTION",
+        ):
+            value = os.environ.get(variable)
+            if value:
+                return value
+
+        config_path = self.base_dir / "config.cfg"
+        if not config_path.exists():
+            return None
+
+        config = configparser.ConfigParser(interpolation=None)
+        config.read(config_path, encoding="utf-8")
+        return config.get("sqlserver", "connection_string", fallback=None)
 
     def view_config(self):
         """Display configuration settings."""
