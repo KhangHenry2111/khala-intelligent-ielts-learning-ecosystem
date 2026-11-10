@@ -16,4 +16,12 @@ export const authApi = {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token }),
   }),
+  updateProfile: (payload, token) => request('/api/auth/profile', {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(payload),
+  }),
 };

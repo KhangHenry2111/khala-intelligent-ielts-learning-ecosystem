@@ -14,6 +14,7 @@ public interface IAuthService
     bool RevokeSession(string token);
     UserInfo? GetSession(string token);
     int RevokeSessions(string userId, string userType);
+    bool UpdateUserProfile(string token, ProfileUpdateRequest request);
     
     /// <summary>
     /// Print all user information to console

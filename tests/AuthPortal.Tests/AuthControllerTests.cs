@@ -112,6 +112,42 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public void UpdateProfile_RequiresALearnerSession()
+    {
+        var service = new FakeAuthService
+        {
+            UserToReturn = new UserInfo { Id = Guid.NewGuid().ToString(), UserType = "Admin" }
+        };
+        var controller = CreateController(service);
+        controller.Request.Headers.Authorization = "Bearer test-token";
+
+        var result = controller.UpdateProfile(new ProfileUpdateRequest
+        {
+            FullName = "Admin", Email = "admin@example.com"
+        });
+
+        Assert.IsType<ForbidResult>(result);
+    }
+
+    [Fact]
+    public void UpdateProfile_ReturnsOnlyEditableProfileFields()
+    {
+        var service = new FakeAuthService
+        {
+            UserToReturn = new UserInfo { Id = Guid.NewGuid().ToString(), UserType = "User" }
+        };
+        var controller = CreateController(service);
+        controller.Request.Headers.Authorization = "Bearer test-token";
+
+        var result = controller.UpdateProfile(new ProfileUpdateRequest
+        {
+            FullName = "Student", Email = "student@example.com"
+        });
+
+        Assert.IsType<OkObjectResult>(result);
+    }
+
+    [Fact]
     public void QuizReview_WithNullPayload_ReturnsBadRequest()
     {
         var controller = new QuizController(new ConfigurationBuilder().AddInMemoryCollection().Build());
@@ -168,4 +204,6 @@ public class FakeAuthService : IAuthService
     public string CreateSession(UserInfo user) => "test-token";
     public bool RevokeSession(string token) => token == "test-token";
     public UserInfo? GetSession(string token) => token == "test-token" ? UserToReturn : null;
+    public int RevokeSessions(string userId, string userType) => 0;
+    public bool UpdateUserProfile(string token, ProfileUpdateRequest request) => token == "test-token";
 }

@@ -2,6 +2,7 @@ using System;
 using AuthPortal.Models;
 using AuthPortal.Services;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using System.Linq;
 using System.Collections.Generic;
 
@@ -16,6 +17,65 @@ public class AuthController : ControllerBase
     public AuthController(IAuthService auth)
     {
         _auth = auth;
+    }
+
+    [HttpPut("profile")]
+    public IActionResult UpdateProfile([FromBody] ProfileUpdateRequest? req)
+    {
+        var token = Request.Headers.Authorization.ToString()
+            .Replace("Bearer ", "", StringComparison.OrdinalIgnoreCase).Trim();
+        var user = _auth.GetSession(token);
+        if (user == null)
+            return Unauthorized(new { success = false, message = "A valid session is required." });
+        if (!string.Equals(user.UserType, "User", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(user.UserType, "Student", StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+        if (req == null || string.IsNullOrWhiteSpace(req.FullName) || string.IsNullOrWhiteSpace(req.Email))
+            return BadRequest(new { success = false, message = "Name and email are required." });
+        if (req.DateOfBirth > DateTime.Today)
+            return BadRequest(new { success = false, message = "Date of birth cannot be in the future." });
+        var allowedGenders = new[] { "Female", "Male", "Other", "Prefer not to say" };
+        var gender = allowedGenders.FirstOrDefault(value =>
+            string.Equals(value, req.Gender?.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(req.Gender) && gender == null)
+            return BadRequest(new { success = false, message = "Choose a valid gender option." });
+        req.Gender = gender;
+        if (!string.IsNullOrWhiteSpace(req.Avatar)
+            && (!Uri.TryCreate(req.Avatar, UriKind.Absolute, out var avatarUri)
+                || (avatarUri.Scheme != Uri.UriSchemeHttps && avatarUri.Scheme != Uri.UriSchemeHttp)))
+            return BadRequest(new { success = false, message = "Profile photo must be an HTTP or HTTPS URL." });
+
+        try
+        {
+            if (!_auth.UpdateUserProfile(token, req))
+                return NotFound(new { success = false, message = "The user profile could not be found." });
+
+            return Ok(new
+            {
+                success = true,
+                user = new
+                {
+                    fullName = req.FullName.Trim(),
+                    email = req.Email.Trim(),
+                    details = new
+                    {
+                        PhoneNumber = req.PhoneNumber?.Trim(),
+                        DateOfBirth = req.DateOfBirth?.Date,
+                        Gender = req.Gender?.Trim(),
+                        Avatar = req.Avatar?.Trim()
+                    }
+                }
+            });
+        }
+        catch (SqlException ex) when (ex.Number is 2601 or 2627)
+        {
+            return Conflict(new { success = false, message = "That email address is already in use." });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Profile update failed: {ex}");
+            return StatusCode(500, new { success = false, message = "An error occurred while updating the profile." });
+        }
     }
 
     [HttpPost("login")]

@@ -20,7 +20,7 @@ export function Topbar({ role, user, onMenuToggle, menuOpen }) {
           <span className="theme-switcher-label">{theme === 'dark' ? t('Light') : t('Dark')}</span>
         </button>
         <button className="notification-btn" type="button">🔔</button>
-        <Link className="avatar-btn" to={`/${role}/profile`}>
+        <Link className="avatar-btn" to={`/${role}/profile`} target="_blank" rel="noopener noreferrer" aria-label={t('Open profile in a new tab')} title={t('Open profile in a new tab')}>
           {(user?.fullName || user?.username || 'U')[0].toUpperCase()}
         </Link>
       </div>

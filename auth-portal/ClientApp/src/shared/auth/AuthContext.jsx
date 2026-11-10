@@ -17,8 +17,20 @@ export function AuthProvider({ children }) {
       setUser(null);
       localStorage.removeItem(storageKey);
     };
+    const handleStorage = (event) => {
+      if (event.key !== storageKey) return;
+      try {
+        setUser(event.newValue ? JSON.parse(event.newValue) : null);
+      } catch {
+        setUser(null);
+      }
+    };
     window.addEventListener('auth:unauthorized', handleUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', handleUnauthorized);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('auth:unauthorized', handleUnauthorized);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
   const signIn = (nextUser) => {

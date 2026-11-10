@@ -89,6 +89,47 @@ public class AuthService : IAuthService
         return revoked;
     }
 
+    public bool UpdateUserProfile(string token, ProfileUpdateRequest request)
+    {
+        var sessionUser = GetSession(token);
+        if (sessionUser == null || !Guid.TryParse(sessionUser.Id, out var userId))
+            return false;
+        if (string.IsNullOrWhiteSpace(_connectionString))
+            throw new InvalidOperationException("The user database connection is not configured.");
+
+        using var conn = new SqlConnection(_connectionString);
+        conn.Open();
+        using var cmd = new SqlCommand(@"UPDATE [User]
+            SET FullName = @FullName, Email = @Email, PhoneNumber = @PhoneNumber, Avatar = @Avatar,
+                DateOfBirth = @DateOfBirth, Gender = @Gender, UpdatedAt = GETDATE()
+            WHERE UserID = @UserID", conn);
+        cmd.Parameters.AddWithValue("@UserID", userId);
+        cmd.Parameters.AddWithValue("@FullName", request.FullName.Trim());
+        cmd.Parameters.AddWithValue("@Email", request.Email.Trim());
+        cmd.Parameters.AddWithValue("@PhoneNumber", (object?)request.PhoneNumber?.Trim() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@Avatar", (object?)request.Avatar?.Trim() ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@DateOfBirth", (object?)request.DateOfBirth?.Date ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@Gender", (object?)request.Gender?.Trim() ?? DBNull.Value);
+
+        if (cmd.ExecuteNonQuery() == 0)
+            return false;
+
+        foreach (var session in _sessions.Values.Where(user =>
+                     string.Equals(user.Id, sessionUser.Id, StringComparison.OrdinalIgnoreCase)))
+        {
+            session.FullName = request.FullName.Trim();
+            session.Email = request.Email.Trim();
+            session.Details["FullName"] = session.FullName;
+            session.Details["Email"] = session.Email;
+            session.Details["PhoneNumber"] = request.PhoneNumber?.Trim();
+            session.Details["Avatar"] = request.Avatar?.Trim();
+            session.Details["DateOfBirth"] = request.DateOfBirth?.Date;
+            session.Details["Gender"] = request.Gender?.Trim();
+        }
+
+        return true;
+    }
+
     public UserInfo? Authenticate(string username, string password, string userType)
     {
         userType = (userType ?? string.Empty).Trim();
