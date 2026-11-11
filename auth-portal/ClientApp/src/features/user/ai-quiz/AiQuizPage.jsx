@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { aiQuizApi } from '../../../shared/api';
 import { useAuth } from '../../../shared/auth/AuthContext';
-import { useLanguage } from '../../../shared/i18n/LanguageContext';
 import { userRank } from '../../../shared/lib/roles';
 import { FeatureShell } from '../../../shared/ui/FeatureShell';
 import { QuizGeneratorForm } from './components/QuizGeneratorForm';
@@ -11,7 +10,6 @@ const quotas = { bronze: '8 per month', silver: '60 per month', gold: '250 per m
 
 export function AiQuizPage() {
   const { user } = useAuth();
-  const { t } = useLanguage();
   const [skill, setSkill] = useState('Reading');
   const [generationMode, setGenerationMode] = useState('topic');
   const [difficulty, setDifficulty] = useState('Intermediate');
@@ -19,6 +17,7 @@ export function AiQuizPage() {
   const [file, setFile] = useState(null);
   const [quiz, setQuiz] = useState(null);
   const [status, setStatus] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   function handleSkillChange(nextSkill) {
     setSkill(nextSkill);
@@ -26,7 +25,8 @@ export function AiQuizPage() {
 
   async function submitQuiz(event) {
     event.preventDefault();
-    setStatus('Checking the document and generating a quiz...');
+    setIsGenerating(true);
+    setStatus('Đang tiếp nhận yêu cầu tạo quiz…');
     setQuiz(null);
     try {
       const payload = {
@@ -40,11 +40,15 @@ export function AiQuizPage() {
         tier: user?.rank || user?.details?.Rank || 'Bronze',
         user_id: user?.id || null,
       };
-      const result = await aiQuizApi.generate(payload, user);
-      setQuiz(result.data?.quiz_preview || result.quiz || result.data);
+      const result = await aiQuizApi.generate(payload, user, setStatus);
+      if (result.success) {
+        setQuiz(result.data?.quiz_preview || result.quiz || result.data);
+      }
       setStatus(result.message || 'Quiz generated and awaiting review.');
     } catch (error) {
       setStatus(error.message);
+    } finally {
+      setIsGenerating(false);
     }
   }
 
@@ -107,7 +111,8 @@ export function AiQuizPage() {
           generationMode={generationMode}
           difficulty={difficulty}
           content={content}
-          status={t(status)}
+          status={status}
+          isGenerating={isGenerating}
           file={file}
           onSkillChange={handleSkillChange}
           onGenerationModeChange={handleGenerationModeChange}

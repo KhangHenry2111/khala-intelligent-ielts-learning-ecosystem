@@ -45,6 +45,16 @@ public class QuizController : ControllerBase
             && Guid.TryParse(session.Id, out var teacherId) ? teacherId : null;
     }
 
+    private Guid? GetCurrentUserId()
+    {
+        var token = Request.Headers.Authorization.ToString();
+        if (token.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase)) token = token[7..].Trim();
+        var session = AuthService?.GetSession(token);
+        return session != null
+            && string.Equals(session.UserType, "User", StringComparison.OrdinalIgnoreCase)
+            && Guid.TryParse(session.Id, out var userId) ? userId : null;
+    }
+
     private static bool TeacherOwnsQuiz(SqlConnection conn, Guid quizId, Guid teacherId, SqlTransaction? tx = null)
     {
         using var cmd = new SqlCommand(@"SELECT CASE WHEN EXISTS (
@@ -1755,6 +1765,7 @@ public class QuizController : ControllerBase
 
             Guid docId = Guid.NewGuid();
             Guid? uploadedBy = null;
+            Guid? uploadedByUserId = null;
             if (!string.IsNullOrWhiteSpace(req.UploadedBy) && Guid.TryParse(req.UploadedBy, out var parsedUploadedBy))
             {
                 using var teacherCheck = new SqlCommand(
@@ -1768,6 +1779,24 @@ public class QuizController : ControllerBase
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(req.UploadedByUserId))
+            {
+                if (!Guid.TryParse(req.UploadedByUserId, out var parsedUserId))
+                {
+                    return BadRequest(new { success = false, message = "UploadedByUserId must be a valid user ID." });
+                }
+
+                using var userCheck = new SqlCommand(
+                    "SELECT CASE WHEN EXISTS (SELECT 1 FROM dbo.[User] WHERE UserID = @UserID) THEN 1 ELSE 0 END",
+                    conn);
+                userCheck.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = parsedUserId });
+                if (Convert.ToInt32(userCheck.ExecuteScalar()) == 0)
+                {
+                    return BadRequest(new { success = false, message = "UploadedByUserId does not belong to an existing user." });
+                }
+                uploadedByUserId = parsedUserId;
+            }
+
             var sourceValue = string.IsNullOrWhiteSpace(req.Source) ? "System" : req.Source;
             if (sourceValue != "System" && sourceValue != "Teacher")
             {
@@ -1776,9 +1805,9 @@ public class QuizController : ControllerBase
 
             string sql = @"
                 INSERT INTO KnowledgeDocument (
-                    DocID, Title, Category, Content, FileURL, Source, UploadedBy, CreatedAt
+                    DocID, Title, Category, Content, FileURL, Source, UploadedBy, UploadedByUserID, CreatedAt
                 ) VALUES (
-                    @DocID, @Title, @Category, @Content, @FileURL, @Source, @UploadedBy, @CreatedAt
+                    @DocID, @Title, @Category, @Content, @FileURL, @Source, @UploadedBy, @UploadedByUserID, @CreatedAt
                 )";
 
             using var cmd = new SqlCommand(sql, conn);
@@ -1789,6 +1818,7 @@ public class QuizController : ControllerBase
             cmd.Parameters.Add(new SqlParameter("@FileURL", SqlDbType.NVarChar, 500) { Value = (object?)req.FileURL ?? DBNull.Value });
             cmd.Parameters.Add(new SqlParameter("@Source", SqlDbType.NVarChar, 20) { Value = sourceValue });
             cmd.Parameters.Add(new SqlParameter("@UploadedBy", SqlDbType.UniqueIdentifier) { Value = uploadedBy.HasValue ? (object)uploadedBy.Value : DBNull.Value });
+            cmd.Parameters.Add(new SqlParameter("@UploadedByUserID", SqlDbType.UniqueIdentifier) { Value = uploadedByUserId.HasValue ? (object)uploadedByUserId.Value : DBNull.Value });
             cmd.Parameters.Add(new SqlParameter("@CreatedAt", SqlDbType.DateTime) { Value = DateTime.UtcNow });
 
             cmd.ExecuteNonQuery();
@@ -1799,6 +1829,50 @@ public class QuizController : ControllerBase
                 message = "Knowledge document saved successfully.",
                 docId = docId.ToString()
             });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { success = false, message = ex.Message });
+        }
+    }
+
+    [HttpGet("knowledge/mine")]
+    public IActionResult GetMyKnowledgeDocuments()
+    {
+        var userId = GetCurrentUserId();
+        if (!userId.HasValue)
+        {
+            return Unauthorized(new { success = false, message = "Sign in as a user to view your knowledge base." });
+        }
+
+        try
+        {
+            using var conn = GetConnection();
+            conn.Open();
+            using var cmd = new SqlCommand(@"
+                SELECT DocID, Title, Category, Content, FileURL, Source, CreatedAt
+                FROM dbo.KnowledgeDocument
+                WHERE UploadedByUserID = @UserID
+                ORDER BY CreatedAt DESC, DocID DESC", conn);
+            cmd.Parameters.Add(new SqlParameter("@UserID", SqlDbType.UniqueIdentifier) { Value = userId.Value });
+
+            var documents = new List<object>();
+            using var reader = cmd.ExecuteReader();
+            while (reader.Read())
+            {
+                documents.Add(new
+                {
+                    docId = reader.GetGuid(0).ToString(),
+                    title = reader.GetString(1),
+                    category = reader.IsDBNull(2) ? null : reader.GetString(2),
+                    content = reader.IsDBNull(3) ? null : reader.GetString(3),
+                    fileUrl = reader.IsDBNull(4) ? null : reader.GetString(4),
+                    source = reader.GetString(5),
+                    createdAt = reader.GetDateTime(6)
+                });
+            }
+
+            return Ok(new { success = true, items = documents });
         }
         catch (Exception ex)
         {

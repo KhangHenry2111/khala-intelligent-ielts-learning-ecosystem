@@ -9,6 +9,10 @@ import sys
 import json
 import logging
 import tempfile
+import threading
+import uuid
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Literal
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -22,6 +26,10 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s"
 )
 logger = logging.getLogger("ielts.ai_quiz")
+_quiz_jobs: Dict[str, Dict[str, Any]] = {}
+_quiz_jobs_lock = threading.Lock()
+_quiz_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="quiz-generation")
+_QUIZ_JOB_TTL = timedelta(hours=1)
 
 # Import the LangGraph runner
 from .graph import run_quiz_pipeline
@@ -232,24 +240,7 @@ def save_quiz_json(req: DirectSaveQuizRequest):
         }
 
 
-@app.post("/api/quiz/generate", response_model=GenerateQuizResponse, tags=["Quiz Generation"])
-def generate_quiz(req: GenerateQuizRequest, response: Response):
-    """
-    Step 1 -> Step 5 IELTS Quiz Generation Pipeline:
-    - B1: Ingest document (OCR if image).
-    - B2: Guardrail check. If unsafe/irrelevant, returns invalid response.
-    - B3: Clean markdown, icons, and punctuation.
-    - B4: Summarizer -> Orchestrator dispatches to tier-appropriate teacher agents.
-          Persists to SQL Server via C# backend API with Status = 'Draft' / 'Pending'.
-    - B5: Exports to Word (.docx) & Excel (.xlsx) and records to KnowledgeDocument.
-
-    NOTE: the response body always carries `success`/`status` so existing frontend
-    logic that reads those fields keeps working unchanged. The HTTP status code is
-    additionally set to 500 on real system errors (pipeline exception, or a global
-    ERROR status) so monitoring/log tooling that only looks at the status code can
-    also detect failures. Guardrail rejection is a valid business outcome, not a
-    system error, so it intentionally stays 200.
-    """
+def _create_quiz_response(req: GenerateQuizRequest, progress_callback=None):
     try:
         logger.info(
             "[AI TRACE] API REQUEST JSON: %s",
@@ -264,10 +255,10 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
             input_type=req.input_type,
             user_tier=req.tier,
             user_id=req.user_id,
-            quiz_title=req.title
+            quiz_title=req.title,
+            progress_callback=progress_callback,
         )
 
-        # Handle Guardrail Failure (B2) — a valid business rejection, not a system error.
         if not final_state.get("guardrail_passed", False):
             logger.info("[AI TRACE] API RESPONSE: REJECTED at guardrail")
             return GenerateQuizResponse(
@@ -276,21 +267,18 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
                 step=2,
                 message=final_state.get("guardrail_reason") or "Tài liệu không an toàn hoặc không liên quan đến nội dung ôn luyện IELTS.",
                 data=None
-            )
+            ), status.HTTP_200_OK
 
-        # Check Global Error
         if final_state.get("status") == "ERROR":
             logger.info("[AI TRACE] API RESPONSE: ERROR: %s", final_state.get("error_message"))
-            response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
             return GenerateQuizResponse(
                 success=False,
                 status="ERROR",
                 step=4,
                 message=final_state.get("error_message") or "Đã xảy ra lỗi trong quá trình xử lý đề thi.",
                 data=None
-            )
+            ), status.HTTP_500_INTERNAL_SERVER_ERROR
 
-        # Build Success Response (B5 completed)
         consolidated = final_state.get("consolidated_quiz") or {}
         backend_res = final_state.get("backend_save_result") or {}
 
@@ -317,18 +305,140 @@ def generate_quiz(req: GenerateQuizRequest, response: Response):
             data=response_data
         )
         logger.info("[AI TRACE] API RESPONSE JSON: %s", json.dumps(result.model_dump(), ensure_ascii=False, default=str)[:12000])
-        return result
+        return result, status.HTTP_200_OK
 
     except Exception as ex:
         logger.exception("[AI TRACE] API ERROR")
-        response.status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
         return GenerateQuizResponse(
             success=False,
             status="ERROR",
             step=1,
             message=f"Lỗi hệ thống: {str(ex)}",
             data=None
+        ), status.HTTP_500_INTERNAL_SERVER_ERROR
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _prune_finished_jobs() -> None:
+    expired_before = datetime.now(timezone.utc) - _QUIZ_JOB_TTL
+    with _quiz_jobs_lock:
+        expired_ids = []
+        for job_id, job in _quiz_jobs.items():
+            if job["status"] == "RUNNING":
+                continue
+            updated_at = datetime.fromisoformat(job["updated_at"])
+            if updated_at < expired_before:
+                expired_ids.append(job_id)
+        for job_id in expired_ids:
+            del _quiz_jobs[job_id]
+
+
+def _update_quiz_job(
+    job_id: str,
+    stage: str,
+    message: str,
+    job_status: str = "RUNNING",
+    result: Optional[Dict[str, Any]] = None,
+) -> None:
+    with _quiz_jobs_lock:
+        job = _quiz_jobs.get(job_id)
+        if job is None:
+            return
+        job.update({
+            "stage": stage,
+            "message": message,
+            "status": job_status,
+            "updated_at": _now_iso(),
+        })
+        if result is not None:
+            job["result"] = result
+    logger.info(
+        "[AI TRACE] JOB PROGRESS: %s",
+        json.dumps({"job_id": job_id, "stage": stage, "status": job_status, "message": message}, ensure_ascii=False),
+    )
+
+
+def _run_quiz_job(job_id: str, req: GenerateQuizRequest) -> None:
+    try:
+        result, http_status = _create_quiz_response(
+            req,
+            progress_callback=lambda stage, message, pipeline_status: _update_quiz_job(
+                job_id,
+                stage,
+                message,
+                "RUNNING",
+            ),
         )
+        payload = result.model_dump()
+        terminal_status = result.status
+        if http_status >= status.HTTP_500_INTERNAL_SERVER_ERROR:
+            terminal_status = "ERROR"
+        _update_quiz_job(
+            job_id,
+            "complete",
+            result.message,
+            terminal_status,
+            payload,
+        )
+    except Exception as exc:
+        logger.exception("[AI TRACE] ASYNC QUIZ JOB ERROR: %s", job_id)
+        failure = GenerateQuizResponse(
+            success=False,
+            status="ERROR",
+            step=1,
+            message=f"Lỗi hệ thống: {exc}",
+            data=None,
+        )
+        _update_quiz_job(job_id, "complete", failure.message, "ERROR", failure.model_dump())
+
+
+@app.post(
+    "/api/quiz/generate/start",
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["Quiz Generation"],
+)
+def start_quiz_generation(req: GenerateQuizRequest):
+    """Start generation in the background so clients can poll live pipeline progress."""
+    _prune_finished_jobs()
+    job_id = uuid.uuid4().hex
+    with _quiz_jobs_lock:
+        _quiz_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "RUNNING",
+            "stage": "queued",
+            "message": "Đã nhận yêu cầu, đang chờ bắt đầu tạo quiz…",
+            "updated_at": _now_iso(),
+            "result": None,
+        }
+    logger.info("[AI TRACE] JOB START: %s", job_id)
+    _quiz_executor.submit(_run_quiz_job, job_id, req)
+    return {
+        "job_id": job_id,
+        "status": "RUNNING",
+        "stage": "queued",
+        "message": "Đã nhận yêu cầu, đang chờ bắt đầu tạo quiz…",
+    }
+
+
+@app.get("/api/quiz/generate/status/{job_id}", tags=["Quiz Generation"])
+def get_quiz_generation_status(job_id: str, response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    with _quiz_jobs_lock:
+        job = _quiz_jobs.get(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Quiz generation task was not found or has expired.")
+        return dict(job)
+
+
+@app.post("/api/quiz/generate", response_model=GenerateQuizResponse, tags=["Quiz Generation"])
+def generate_quiz(req: GenerateQuizRequest, response: Response):
+    """Synchronous compatibility endpoint for existing API clients."""
+    result, http_status = _create_quiz_response(req)
+    response.status_code = http_status
+    return result
 
 
 if __name__ == "__main__":

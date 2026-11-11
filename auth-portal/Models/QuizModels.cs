@@ -79,6 +79,7 @@ public class SaveKnowledgeRequest
     public string? FileURL { get; set; }
     public string? Source { get; set; } = "AI_Generated";
     public string? UploadedBy { get; set; }
+    public string? UploadedByUserId { get; set; }
 }
 
 public class ModerationDecisionRequest

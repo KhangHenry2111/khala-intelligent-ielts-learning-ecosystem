@@ -33,9 +33,9 @@ async function resolveAiQuizUrl() {
 }
 
 export const aiQuizApi = {
-  generate: async (payload, user) => {
+  generate: async (payload, user, onStatus = () => {}) => {
     const aiQuizUrl = await resolveAiQuizUrl();
-    return request(`${aiQuizUrl}/api/quiz/generate`, {
+    const job = await request(`${aiQuizUrl}/api/quiz/generate/start`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -44,6 +44,28 @@ export const aiQuizApi = {
       },
       body: JSON.stringify(payload),
     });
+    onStatus(job.message);
+
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      let current;
+      try {
+        current = await request(
+          `${aiQuizUrl}/api/quiz/generate/status/${encodeURIComponent(job.job_id)}`,
+        );
+      } catch (error) {
+        if (!(error instanceof TypeError)) throw error;
+        onStatus('Mất kết nối tạm thời; vẫn đang chờ trạng thái tạo quiz…');
+        continue;
+      }
+      onStatus(current.message);
+      if (current.status !== 'RUNNING') {
+        if (!current.result) {
+          throw new Error('Quiz generation finished without a result.');
+        }
+        return current.result;
+      }
+    }
   },
   export: async (quiz, extension) => {
     const aiQuizUrl = await resolveAiQuizUrl();

@@ -33,7 +33,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 from functools import wraps
 from pathlib import Path
-from typing import Dict, List, Any, Optional, TypedDict, Union
+from typing import Callable, Dict, List, Any, Optional, Tuple, TypedDict, Union
 
 import requests
 
@@ -139,11 +139,63 @@ def _print_ai_answer(label: str, content: Any) -> None:
 class OpenRouterLLM:
     """Small OpenRouter client for the guardrail's OpenAI-compatible endpoint."""
 
-    def __init__(self, model: str, temperature: float, api_key: str, base_url: str):
+    def __init__(
+        self,
+        model: str,
+        temperature: float,
+        api_key: str,
+        base_url: str,
+        on_status: Optional[Callable[[str, str, str], None]] = None,
+    ):
         self.model = model
         self.temperature = temperature
         self.api_key = api_key
         self.base_url = base_url
+        self.on_status = on_status
+
+    def _post_with_retries(
+        self,
+        url: str,
+        *,
+        headers: Dict[str, str],
+        json: Dict[str, Any],
+        timeout: Tuple[float, float] = (15, 300),
+    ) -> requests.Response:
+        attempt = 0
+        while True:
+            try:
+                response = requests.post(
+                    url,
+                    headers=headers,
+                    json=json,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                return response
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                attempt += 1
+                retry_error = exc
+            except requests.HTTPError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code not in (408, 429) and not (status_code and status_code >= 500):
+                    raise
+                attempt += 1
+                retry_error = exc
+
+            delay = min(2 ** min(attempt - 1, 5), 30)
+            logger.warning(
+                "OpenRouter request failed (attempt %d); retrying in %d seconds: %s",
+                attempt,
+                delay,
+                retry_error,
+            )
+            if self.on_status:
+                self.on_status(
+                    "llm_retry",
+                    "Dịch vụ AI tạm thời chưa phản hồi; hệ thống vẫn đang chờ và tự thử lại.",
+                    "RUNNING",
+                )
+            time.sleep(delay)
 
     def invoke(self, values: Dict[str, Any]) -> str:
         prompt = values.get("prompt", "")
@@ -159,7 +211,7 @@ class OpenRouterLLM:
             ],
         }
         _trace("MODEL REQUEST JSON", request_json)
-        response = requests.post(
+        response = self._post_with_retries(
             self.base_url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
@@ -168,7 +220,7 @@ class OpenRouterLLM:
                 "X-Title": "IELTS Study Assistant",
             },
             json=request_json,
-            timeout=60,
+            timeout=(15, 300),
         )
         response.raise_for_status()
         response_json = response.json()
@@ -264,11 +316,39 @@ class QuizState(TypedDict):
     status: str                      # "SUCCESS" | "REJECTED" | "ERROR" | "SUCCESS_DEGRADED"
     error_message: Optional[str]
     used_fallback: bool              # True only when the summarizer fell back to heuristics
+    progress_callback: Optional[Any]
 
 
 # --------------------------------------------------------------------------
 # Node-level exception guard
 # --------------------------------------------------------------------------
+_PROGRESS_MESSAGES = {
+    "ingest_node": "Đang đọc tài liệu đầu vào…",
+    "guardrail_node": "Đang kiểm tra độ an toàn và mức độ phù hợp…",
+    "preprocess_node": "Đang làm sạch nội dung…",
+    "summarizer_node": "AI đang phân tích chủ đề và độ khó…",
+    "question_type_node": "Đang lên kế hoạch các dạng câu hỏi…",
+    "orchestrator_node": "Đang chuẩn bị cấu trúc bài quiz…",
+    "reading_teacher_node": "AI đang tạo câu hỏi Reading…",
+    "listening_teacher_node": "AI đang tạo câu hỏi Listening…",
+    "speaking_teacher_node": "AI đang tạo nội dung Speaking…",
+    "writing_teacher_node": "AI đang tạo nội dung Writing…",
+    "backend_sync_node": "Đang lưu quiz…",
+    "export_knowledge_node": "Đang xuất tài liệu và hoàn tất…",
+}
+
+
+def _report_progress(state: "QuizState", stage: str, message: str, status: str = "RUNNING") -> None:
+    event = {"stage": stage, "message": message, "status": status}
+    _trace("PROGRESS", event)
+    callback = state.get("progress_callback")
+    if callable(callback):
+        try:
+            callback(stage, message, status)
+        except Exception:
+            logger.exception("Could not publish quiz pipeline progress")
+
+
 def _node_guard(node_name: str):
     """
     Wrap a node so that:
@@ -282,9 +362,23 @@ def _node_guard(node_name: str):
             if state.get("status") == "ERROR":
                 return {}
             try:
-                return fn(state)
+                _report_progress(
+                    state,
+                    node_name,
+                    _PROGRESS_MESSAGES.get(node_name, "Đang xử lý quiz…"),
+                )
+                result = fn(state)
+                if result.get("status") == "ERROR":
+                    _report_progress(
+                        state,
+                        node_name,
+                        result.get("error_message") or "Không thể hoàn tất bước xử lý này.",
+                        "ERROR",
+                    )
+                return result
             except Exception as exc:
                 logger.exception("Node '%s' failed", node_name)
+                _report_progress(state, node_name, f"Bước xử lý gặp lỗi: {exc}", "ERROR")
                 return {
                     "status": "ERROR",
                     "error_message": f"{node_name} failed: {exc}",
@@ -1651,7 +1745,8 @@ def export_knowledge_node(state: QuizState) -> Dict[str, Any]:
         "Content": doc_summary,
         "FileURL": file_url,
         "Source": "System",
-        "UploadedBy": None if not user_id or not str(user_id).strip() else str(user_id).strip()
+        "UploadedBy": None,
+        "UploadedByUserId": None if not user_id or not str(user_id).strip() else str(user_id).strip()
     }
     knowledge_url = tool_params.get("knowledge_url") or "http://localhost:5000/api/quiz/knowledge"
     _trace("TOOL CALLED: save_to_knowledge_base", {"url": knowledge_url})
@@ -1756,6 +1851,7 @@ def run_quiz_pipeline(
     generation_mode: str = "source",
     target_question_count: Optional[int] = None,
     raw_input_name: Optional[str] = None,
+    progress_callback: Optional[Callable[[str, str, str], None]] = None,
 ) -> Dict[str, Any]:
     """
     Execute the compiled LangGraph workflow with input parameters.
@@ -1770,6 +1866,8 @@ def run_quiz_pipeline(
                               "allowed_skills": allowed_skills})
     if llm is None:
         llm = _load_default_llm()
+        if isinstance(llm, OpenRouterLLM):
+            llm.on_status = progress_callback
     initial_state: QuizState = {
         "raw_input": raw_input,
         "raw_input_name": raw_input_name,
@@ -1809,7 +1907,8 @@ def run_quiz_pipeline(
         "knowledge_doc_id": None,
         "status": "INIT",
         "error_message": None,
-        "used_fallback": False
+        "used_fallback": False,
+        "progress_callback": progress_callback,
     }
 
     try:
@@ -1825,4 +1924,12 @@ def run_quiz_pipeline(
         }
 
     _trace("PIPELINE END", {"status": final_state.get("status"), "allocated_teachers": final_state.get("allocated_teachers")})
+    final_status = final_state.get("status", "SUCCESS")
+    _report_progress(
+        initial_state,
+        "complete",
+        "Đã tạo quiz thành công." if final_status in ("SUCCESS", "SUCCESS_DEGRADED")
+        else "Không thể hoàn tất yêu cầu tạo quiz.",
+        "COMPLETED" if final_status in ("SUCCESS", "SUCCESS_DEGRADED") else final_status,
+    )
     return final_state

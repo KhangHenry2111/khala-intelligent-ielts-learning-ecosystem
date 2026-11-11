@@ -642,3 +642,52 @@ _______________________________________
 - Verified Vite production build and isolated ASP.NET build; unit test run is blocked by the existing FakeAuthService interface mismatch.
 - Guarded one-time admin key display so a key response cannot appear in another lesson dialog.
 _______________________________________
+
+[Id 33]:
+[Model_name]: Codex
+[Time]: 2026-11-11 17:54
+[Title]: Fix quiz generation timeout and live progress
+[Status]: Done
+[Changed_File]:
+- AI_quiz/README.md
+- AI_quiz/graph.py
+- AI_quiz/quiz_api.py
+- AI_quiz/tests/test_quiz_pipeline.py
+- auth-portal/ClientApp/src/features/ai-quiz/AiQuizGenerator.jsx
+- auth-portal/ClientApp/src/features/user/ai-quiz/AiQuizPage.jsx
+- auth-portal/ClientApp/src/features/user/ai-quiz/components/QuizGeneratorForm.jsx
+- auth-portal/ClientApp/src/shared/api/aiQuizApi.js
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/VI/index.js
+- auth-portal/ClientApp/src/styles.css
+[Description]
+- Increase OpenRouter timeout and retry transient network failures until completion.
+- Expose pipeline progress updates to the quiz UI using backend job status polling.
+- Raised OpenRouter connect/read timeout to 15/300 seconds and added exponential retries for transient network failures, HTTP 408/429, and server errors until the provider responds.
+- Added background quiz-generation jobs and polling status endpoints; UI shows live pipeline progress and reconnects on transient polling network failures.
+- Added retry/status tests; frontend production build passed. Full pipeline suite has two existing failures from passage samples shorter than its validation threshold.
+_______________________________________
+
+[Id 34]:
+[Model_name]: Codex
+[Time]: 2026-11-11 18:18
+[Title]: Show generated quizzes in user knowledge base
+[Status]: Done
+[Changed_File]:
+- AI_quiz/README.md
+- AI_quiz/graph.py
+- AI_quiz/tests/test_quiz_pipeline.py
+- auth-portal/ClientApp/src/features/user/knowledge/KnowledgeBasePage.jsx
+- auth-portal/ClientApp/src/shared/api/quizApi.js
+- auth-portal/ClientApp/src/shared/i18n/locales/EN/index.js
+- auth-portal/ClientApp/src/shared/i18n/locales/VI/index.js
+- auth-portal/ClientApp/src/styles.css
+- auth-portal/Controllers/QuizController.cs
+- auth-portal/Models/QuizModels.cs
+- knowledge_document_user_owner_migration.sql
+[Description]
+- Trace AI quiz KnowledgeDocument storage and user Knowledge Base loading; ensure completed generated quizzes and exported files appear for the requesting user.
+- Persist AI-generated quiz knowledge documents under UploadedByUserID while preserving teacher ownership.
+- Added a user-authenticated endpoint and personal Knowledge Base UI to list only the signed-in user generated quiz documents.
+- Validated with the frontend production build, ASP.NET backend build, and 23 passing pipeline tests; 5 skipped and 2 stale passage-fixture tests excluded.
+_______________________________________

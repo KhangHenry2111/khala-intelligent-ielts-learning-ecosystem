@@ -48,6 +48,9 @@ export const quizApi = {
     headers: { Authorization: `Bearer ${token}` },
   }),
   packages: () => request('/api/quiz/packages'),
+  myKnowledgeDocuments: (token) => request('/api/quiz/knowledge/mine', {
+    headers: { Authorization: `Bearer ${token}` },
+  }),
   content: (token) => request('/api/quiz/content', { headers: { Authorization: `Bearer ${token}` } }),
   contentDetails: (id, token) => request(`/api/quiz/content/${id}`, {
     headers: { Authorization: 'Bearer ' + token },

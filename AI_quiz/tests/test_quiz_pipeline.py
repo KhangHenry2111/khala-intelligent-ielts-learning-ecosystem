@@ -12,7 +12,9 @@ Tests:
 import json
 import os
 import sys
+import time
 import pytest
+import requests
 from unittest.mock import Mock
 from fastapi.testclient import TestClient
 
@@ -31,11 +33,13 @@ from AI_quiz.tool import (
     export_to_excel
 )
 from AI_quiz.graph import (
+    OpenRouterLLM,
     run_quiz_pipeline,
     backend_sync_node,
     question_type_node,
     _validate_question_type_plan,
     _generate_multi_stream_payload,
+    export_knowledge_node,
     reading_teacher_node,
 )
 from AI_quiz.quiz_api import app
@@ -322,6 +326,111 @@ def test_api_generate_forwards_multi_stream_quiz_options(monkeypatch):
     assert response.status_code == 200
     assert observed["generation_mode"] == "topic"
     assert observed["target_question_count"] == 40
+
+
+def test_openrouter_retries_temporary_network_errors_with_extended_timeout(monkeypatch):
+    observed_timeouts = []
+    progress_events = []
+    sleeps = []
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"choices": [{"message": {"content": "ready"}}]}
+
+    attempts = iter([requests.Timeout("read timed out"), FakeResponse()])
+
+    def fake_post(url, *, headers, json, timeout):
+        observed_timeouts.append(timeout)
+        outcome = next(attempts)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr("AI_quiz.graph.requests.post", fake_post)
+    monkeypatch.setattr("AI_quiz.graph.time.sleep", sleeps.append)
+    llm = OpenRouterLLM(
+        "test-model",
+        0.2,
+        "test-key",
+        "https://example.test/chat",
+        on_status=lambda *event: progress_events.append(event),
+    )
+
+    assert llm.invoke({"prompt": "test"}) == "ready"
+    assert observed_timeouts == [(15, 300), (15, 300)]
+    assert sleeps == [1]
+    assert progress_events[0][0] == "llm_retry"
+
+
+def test_async_quiz_generation_exposes_pipeline_status(monkeypatch):
+    def fake_pipeline(**kwargs):
+        kwargs["progress_callback"](
+            "summarizer_node",
+            "AI đang phân tích chủ đề và độ khó…",
+            "RUNNING",
+        )
+        return {
+            "guardrail_passed": False,
+            "guardrail_reason": "rejected by test",
+        }
+
+    monkeypatch.setattr("AI_quiz.quiz_api.run_quiz_pipeline", fake_pipeline)
+    started = client.post("/api/quiz/generate/start", json={"document": "test topic"})
+
+    assert started.status_code == 202
+    job_id = started.json()["job_id"]
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        current = client.get(f"/api/quiz/generate/status/{job_id}")
+        if current.json()["status"] != "RUNNING":
+            break
+        time.sleep(0.01)
+
+    assert current.status_code == 200
+    assert current.json()["status"] == "REJECTED"
+    assert current.json()["result"]["status"] == "REJECTED"
+
+
+def test_generated_quiz_knowledge_document_is_assigned_to_requesting_user(tmp_path, monkeypatch):
+    observed = {}
+
+    def fake_export(quiz, output_path):
+        with open(output_path, "wb") as output:
+            output.write(b"export")
+        return output_path
+
+    def fake_save(document, url):
+        observed["document"] = document
+        observed["url"] = url
+        return {"docId": "doc-user-1"}
+
+    monkeypatch.setattr("AI_quiz.graph.export_to_word", fake_export)
+    monkeypatch.setattr("AI_quiz.graph.export_to_excel", fake_export)
+    monkeypatch.setattr("AI_quiz.graph.save_to_knowledge_base", fake_save)
+
+    result = export_knowledge_node({
+        "consolidated_quiz": {
+            "Title": "My IELTS Quiz",
+            "Skill": "Reading",
+            "Level": "Intermediate",
+            "Passage": {"WordCount": 100},
+            "QuestionGroups": [],
+        },
+        "user_id": "user-123",
+        "tool_params": {
+            "word_output_path": str(tmp_path / "default.docx"),
+            "excel_output_path": str(tmp_path / "default.xlsx"),
+            "knowledge_url": "https://backend.test/api/quiz/knowledge",
+        },
+        "used_fallback": False,
+    })
+
+    assert result["knowledge_doc_id"] == "doc-user-1"
+    assert observed["document"]["UploadedByUserId"] == "user-123"
+    assert observed["document"]["UploadedBy"] is None
 
 
 @pytest.mark.parametrize(

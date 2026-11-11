@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { aiQuizApi } from '../../app/api';
+import { aiQuizApi } from '../../shared/api';
 
 export function AiQuizGenerator({ user }) {
   const [skill, setSkill] = useState('Reading');
@@ -8,10 +8,12 @@ export function AiQuizGenerator({ user }) {
   const [file, setFile] = useState(null);
   const [quiz, setQuiz] = useState(null);
   const [status, setStatus] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
 
   async function submitQuiz(event) {
     event.preventDefault();
-    setStatus('Checking the document and generating a quiz...');
+    setIsGenerating(true);
+    setStatus('Đang tiếp nhận yêu cầu tạo quiz…');
     setQuiz(null);
     try {
       const payload = file
@@ -29,14 +31,13 @@ export function AiQuizGenerator({ user }) {
             tier: user?.rank || user?.details?.Rank || 'Bronze',
             user_id: user?.id || null,
           };
-      const result = await aiQuizApi.generate(
-        payload,
-        user
-      );
-      setQuiz(result.quiz);
-      setStatus('Quiz generated and awaiting review.');
+      const result = await aiQuizApi.generate(payload, user, setStatus);
+      setQuiz(result.success ? (result.data?.quiz_preview || result.quiz || null) : null);
+      setStatus(result.message || 'Quiz generated and awaiting review.');
     } catch (error) {
       setStatus(error.message);
+    } finally {
+      setIsGenerating(false);
     }
   }
 
@@ -69,7 +70,8 @@ export function AiQuizGenerator({ user }) {
 
   return (
     <>
-      <form className="quiz-generator" onSubmit={submitQuiz}>
+      <form className="quiz-generator" onSubmit={submitQuiz} aria-busy={isGenerating}>
+        <fieldset className="quiz-generator-fields" disabled={isGenerating}>
         <div className="skill-picker" role="group" aria-label="Select skill">
           {['Reading', 'Speaking', 'Writing', 'Listening', 'All'].map((option) => (
             <button
@@ -95,20 +97,28 @@ export function AiQuizGenerator({ user }) {
           rows="8"
           required={!file}
         />
-        <button className="feature-action" type="submit">Generate quiz <span>→</span></button>
-        {status && <p className="quiz-status" role="status">{status}</p>}
+        <button className="feature-action" type="submit">
+          {isGenerating ? 'Generating quiz...' : 'Generate quiz'} <span>{isGenerating ? '…' : '→'}</span>
+        </button>
+        </fieldset>
+        {status && (
+          <p className={`quiz-status${isGenerating ? ' is-loading' : ''}`} role="status" aria-live="polite">
+            {isGenerating && <span className="quiz-status-spinner" aria-hidden="true" />}
+            {status}
+          </p>
+        )}
       </form>
       {quiz && (
         <section className="quiz-result glass-card">
           <span className="eyebrow">AI quiz</span>
-          <h2>{quiz.title}</h2>
-          {quiz.passage && <p className="quiz-passage">{quiz.passage}</p>}
+          <h2>{quiz.Title || quiz.title}</h2>
+          {(quiz.Passage?.Content || quiz.passage) && <p className="quiz-passage">{quiz.Passage?.Content || quiz.passage}</p>}
           {quiz.transcript && <p className="quiz-passage"><strong>Transcript:</strong> {quiz.transcript}</p>}
-          {quiz.questions?.map((question, index) => (
+          {(quiz.QuestionGroups?.flatMap((group) => group.Questions || []) || quiz.questions || []).map((question, index) => (
             <article className="quiz-question" key={`${question.content}-${index}`}>
-              <strong>{index + 1}. {question.content}</strong>
-              {question.options?.map((option) => <div key={option}>{option}</div>)}
-              <small>Answer: {question.correctAnswer}</small>
+              <strong>{index + 1}. {question.Content || question.content}</strong>
+              {(question.Options || question.options || []).map((option) => <div key={option}>{option}</div>)}
+              <small>Answer: {question.CorrectAnswer || question.correctAnswer}</small>
             </article>
           ))}
           <div className="quiz-exports">
