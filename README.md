@@ -103,6 +103,14 @@ sqlcmd -S "(localdb)\MSSQLLocalDB" -d master -i SqlScripts.sql
 
 Schema script phải chạy trên `master` để có thể tạo database `IELTS` nếu database chưa tồn tại. Launcher (`python main.py` → option 5) chạy được bằng `sqlcmd` nếu đã cài; nếu chưa, nó dùng `pyodbc` và SQL Server ODBC Driver có sẵn để chạy script.
 
+Để đồng bộ các bảng mới có trong database nhưng chưa có trong schema gốc, chạy:
+
+```powershell
+python scripts\sync_new_tables.py
+```
+
+Script dùng connection string theo thứ tự cấu hình ở dưới và cập nhật trực tiếp một khối được đánh dấu ở cuối `sqlScripts.sql`. Nội dung schema hiện tại được giữ nguyên; mỗi lần chạy chỉ thay khối tự sinh, tránh nối lặp bảng. Khối này chứa DDL idempotent cho các bảng chưa có trong schema gốc (cột, khóa, constraint, foreign key và index). Script chỉ đọc database, không tự chạy DDL lên đó. Kiểm tra `sqlScripts.sql` sau khi cập nhật rồi dùng file này khi cần triển khai schema. Có thể dùng `--source` để chỉ định file schema khác, hoặc `--output` để sinh migration riêng thay vì sửa file nguồn.
+
 Connection string đọc theo thứ tự:
 
 1. `SQLSERVER_CONNECTION_STRING` / `ConnectionStrings__Default` / `USER_DB_CONNECTION`
