@@ -24,8 +24,10 @@ export function AuthForm({
   form,
   error,
   busy,
+  successMessage,
   onChange,
   onSubmit,
+  onForgotPassword,
 }) {
   const { t } = useLanguage();
   const accountLabel = role === 'teacher' ? 'teacher' : title.toLowerCase();
@@ -39,6 +41,7 @@ export function AuthForm({
       <span className="form-kicker">{isRegister ? t('Begin your progress') : `${t(title)} ${t('workspace')}`}</span>
       <h2>{heading}</h2>
       <p className="form-hint">{isRegister ? t('Add your details to get started.') : t('Sign in to continue your learning journey.')}</p>
+      {successMessage && <p className="auth-success" role="status">{t(successMessage)}</p>}
 
       {isRegister && role === 'teacher' && (
         <div className="form-grid">
@@ -76,6 +79,13 @@ export function AuthForm({
       <button disabled={busy}>
         {busy ? t('Processing...') : t(submitLabel)} <span>→</span>
       </button>
+      {!isRegister && role !== 'admin' && (
+        <p className="auth-switch">
+          <button type="button" className="auth-inline-button" onClick={onForgotPassword}>
+            {t('Forgot password?')}
+          </button>
+        </p>
+      )}
       {role !== 'admin' && (
         <p className="auth-switch">
           {isRegister ? t('Already have an account?') : t("Don't have an account?")}{' '}

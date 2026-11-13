@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System.Linq;
 using System.Collections.Generic;
+using System.Net.Http;
 
 namespace AuthPortal.Controllers;
 
@@ -13,10 +14,12 @@ namespace AuthPortal.Controllers;
 public class AuthController : ControllerBase
 {
     private readonly IAuthService _auth;
+    private readonly IPasswordResetService _passwordReset;
 
-    public AuthController(IAuthService auth)
+    public AuthController(IAuthService auth, IPasswordResetService passwordReset)
     {
         _auth = auth;
+        _passwordReset = passwordReset;
     }
 
     [HttpPut("profile")]
@@ -222,6 +225,67 @@ public class AuthController : ControllerBase
         }
     }
 
+    [HttpPost("forgot-password")]
+    public async Task<IActionResult> RequestPasswordReset([FromBody] PasswordResetCodeRequest req)
+    {
+        if (!IsPasswordResetRoleAllowed(req.UserType))
+            return StatusCode(403, new { success = false, message = "Password reset is available only for User and Teacher accounts." });
+        if (!ModelState.IsValid)
+            return BadRequest(new { success = false, message = "Invalid password reset request." });
+
+        try
+        {
+            await _passwordReset.RequestCodeAsync(req);
+            return Ok(new
+            {
+                success = true,
+                message = "If the account details match, a verification code will be sent."
+            });
+        }
+        catch (HttpRequestException ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Password reset code delivery failed: {ex}");
+            return StatusCode(503, new { success = false, message = "The verification code could not be sent. Check the email/SMS service configuration." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Password reset is not configured: {ex}");
+            return StatusCode(503, new { success = false, message = "Password reset is not configured. Check config.cfg and the notification service." });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Password reset request failed: {ex}");
+            return StatusCode(500, new { success = false, message = "An error occurred while requesting a password reset." });
+        }
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<IActionResult> ResetPassword([FromBody] PasswordResetConfirmRequest req)
+    {
+        if (!IsPasswordResetRoleAllowed(req.UserType))
+            return StatusCode(403, new { success = false, message = "Password reset is available only for User and Teacher accounts." });
+        if (!ModelState.IsValid)
+            return BadRequest(new { success = false, message = "Invalid password reset data." });
+
+        try
+        {
+            if (!await _passwordReset.ResetPasswordAsync(req))
+                return BadRequest(new { success = false, message = "The verification code is invalid or expired." });
+
+            return Ok(new { success = true, message = "Password reset successful." });
+        }
+        catch (InvalidOperationException ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Password reset is not configured: {ex}");
+            return StatusCode(503, new { success = false, message = "Password reset is not configured. Check config.cfg." });
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"[AuthController] Password update failed: {ex}");
+            return StatusCode(500, new { success = false, message = "An error occurred while resetting the password." });
+        }
+    }
+
     [HttpPost("logout")]
     public IActionResult Logout([FromBody] LogoutRequest? req)
     {
@@ -232,4 +296,10 @@ public class AuthController : ControllerBase
         _auth.RevokeSession(token);
         return Ok(new { success = true, message = "Logout successful" });
     }
+
+    private static bool IsPasswordResetRoleAllowed(string? userType) =>
+        string.Equals(userType?.Trim(), "user", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(userType?.Trim(), "student", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(userType?.Trim(), "teacher", StringComparison.OrdinalIgnoreCase)
+        || string.Equals(userType?.Trim(), "instructor", StringComparison.OrdinalIgnoreCase);
 }

@@ -1518,7 +1518,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   max-width: 480px;
 }
 .auth-form h2 { font-size: 2.5rem; font-family: var(--font-heading); margin: 10px 0; }
-.auth-form input {
+.auth-form input, .auth-form select {
   width: 100%;
   padding: 12px;
   background: rgba(255,255,255,0.05);
@@ -1528,7 +1528,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
   margin-bottom: 16px;
   margin-top: 8px;
 }
-.auth-form input:focus {
+.auth-form input:focus, .auth-form select:focus {
   border-color: var(--primary-color);
   outline: none;
 }
@@ -1547,6 +1547,8 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .auth-form button:hover { background: #4338ca; }
 .auth-switch { margin-top: 20px; text-align: center; color: var(--text-secondary); }
 .auth-switch a { color: var(--secondary-color); text-decoration: none; }
+.auth-inline-button { padding: 0; border: 0; background: none; color: var(--secondary-color); font: inherit; cursor: pointer; }
+.auth-success { margin-top: 14px; color: #6ee7b7; font-size: .9rem; line-height: 1.5; }
 
 .teacher-quiz-page { display: grid; gap: 22px; }
 .teacher-quiz-intro h1 { margin: 8px 0; font-family: var(--font-heading); }

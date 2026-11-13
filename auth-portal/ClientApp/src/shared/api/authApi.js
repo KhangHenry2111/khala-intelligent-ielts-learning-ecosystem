@@ -11,6 +11,16 @@ export const authApi = {
     headers: { 'Content-Type': 'application/json', 'X-Frontend-Client': 'auth-portal' },
     body: JSON.stringify(payload),
   }),
+  requestPasswordReset: (payload) => request('/api/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
+  resetPassword: (payload) => request('/api/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }),
   logout: (token) => request('/api/auth/logout', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

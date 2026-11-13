@@ -111,6 +111,12 @@ python scripts\sync_new_tables.py
 
 Script dùng connection string theo thứ tự cấu hình ở dưới và cập nhật trực tiếp một khối được đánh dấu ở cuối `sqlScripts.sql`. Nội dung schema hiện tại được giữ nguyên; mỗi lần chạy chỉ thay khối tự sinh, tránh nối lặp bảng. Khối này chứa DDL idempotent cho các bảng chưa có trong schema gốc (cột, khóa, constraint, foreign key và index). Script chỉ đọc database, không tự chạy DDL lên đó. Kiểm tra `sqlScripts.sql` sau khi cập nhật rồi dùng file này khi cần triển khai schema. Có thể dùng `--source` để chỉ định file schema khác, hoặc `--output` để sinh migration riêng thay vì sửa file nguồn.
 
+Tạo bảng mã xác minh quên mật khẩu:
+
+```powershell
+sqlcmd -S "(localdb)\MSSQLLocalDB" -d IELTS -i scripts\password_reset_migration.sql
+```
+
 Connection string đọc theo thứ tự:
 
 1. `SQLSERVER_CONNECTION_STRING` / `ConnectionStrings__Default` / `USER_DB_CONNECTION`
@@ -137,7 +143,17 @@ cd auth-portal
 dotnet run --urls http://localhost:5000
 ```
 
-### 4. Frontend (dev)
+### 4. Dịch vụ gửi mã đặt lại mật khẩu
+
+Điền các mục `[password_reset]`, `[smtp]` và `[sms]` trong `config.cfg`, sau đó chạy dịch vụ gửi mã tại `auth-portal`:
+
+```powershell
+python password_reset_mailer.py
+```
+
+Email được gửi bằng `smtplib`. SMS API cần nhận JSON `{ "to", "from", "message" }` và xác thực Bearer token. Dịch vụ chỉ bind `127.0.0.1:8001`; API key nội bộ phải giống nhau ở AuthPortal và dịch vụ này.
+
+### 5. Frontend (dev)
 
 ```powershell
 cd auth-portal/ClientApp
@@ -147,7 +163,7 @@ npm run dev
 
 Vite: `http://localhost:5173`, proxy `/api` → `http://localhost:5000`.
 
-### 5. Production SPA qua ASP.NET
+### 6. Production SPA qua ASP.NET
 
 ```powershell
 cd auth-portal/ClientApp
@@ -158,7 +174,7 @@ dotnet run --urls http://localhost:5000
 
 Mở `http://localhost:5000`.
 
-### 6. Launcher
+### 7. Launcher
 
 ```powershell
 python main.py
@@ -204,6 +220,25 @@ api_key =
 base_url = https://openrouter.ai/api/v1/chat/completions
 ocr_engine = tesseract
 tesseract_cmd = C:\Program Files\Tesseract-OCR\tesseract.exe
+
+[password_reset]
+service_url = http://127.0.0.1:8001
+service_api_key =
+
+[smtp]
+host =
+port = 587
+username =
+password =
+sender =
+use_ssl = false
+use_starttls = true
+timeout_seconds = 15
+
+[sms]
+endpoint =
+bearer_token =
+sender =
 ```
 
 Ghi đè bằng biến môi trường khi có: `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_NAME`, `OPENROUTER_BASE_URL`, `IELTS_SAVE_QUIZ_URL`, `IELTS_SAVE_KNOWLEDGE_URL`, `IELTS_EXPORT_DIR`, `IELTS_CHARTS_DIR`.
@@ -359,6 +394,8 @@ SPA signIn(user) → localStorage → /:role/dashboard
 Protected / RoleRoute chặn sai role
 ```
 
+Đặt lại mật khẩu chỉ hỗ trợ User và Teacher. Mã 8 chữ số hết hạn sau 10 phút, tối đa 5 lần nhập sai; mã chỉ lưu dạng băm trong `PasswordResetCode` và mã cũ bị vô hiệu hóa sau khi đặt lại thành công. Admin bị từ chối ở API.
+
 `userType` trên form: `User` | `Teacher` | `Admin` (alias student/instructor được chuẩn hóa ở router).
 
 ---
@@ -371,6 +408,8 @@ Protected / RoleRoute chặn sai role
 | --- | --- | --- |
 | POST | `/api/auth/login` | Body: `username`, `password`, `userType`. 401 nếu sai. |
 | POST | `/api/auth/register` | Cấm Admin. Teacher cần đủ field. Duplicate: Username / Email / PhoneNumber. |
+| POST | `/api/auth/forgot-password` | `{ username, userType, method, destination }`; `method`: `email` hoặc `phone`. |
+| POST | `/api/auth/reset-password` | Thêm `code` (8 chữ số) và `newPassword`; chỉ User/Teacher. |
 | POST | `/api/auth/logout` | `{ "token" }` hoặc `Authorization: Bearer`. |
 
 ### Quiz persistence (`http://localhost:5000`)

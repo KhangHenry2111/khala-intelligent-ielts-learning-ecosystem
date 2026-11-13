@@ -3,6 +3,7 @@ using AuthPortal.Models;
 using AuthPortal.Services;
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
@@ -15,7 +16,7 @@ public class AuthControllerTests
     [Fact]
     public void Login_WithMissingUsername_ReturnsBadRequest()
     {
-        var controller = new AuthController(new FakeAuthService());
+        var controller = new AuthController(new FakeAuthService(), new FakePasswordResetService());
 
         var result = controller.Login(new LoginRequest { Password = "secret" });
 
@@ -25,7 +26,7 @@ public class AuthControllerTests
     [Fact]
     public void Login_WithInvalidCredentials_ReturnsUnauthorized()
     {
-        var controller = new AuthController(new FakeAuthService());
+        var controller = new AuthController(new FakeAuthService(), new FakePasswordResetService());
 
         var result = controller.Login(new LoginRequest
         {
@@ -47,7 +48,7 @@ public class AuthControllerTests
                 Details = new Dictionary<string, object?> { ["Password"] = "secret" }
             }
         };
-        var controller = new AuthController(service);
+        var controller = new AuthController(service, new FakePasswordResetService());
 
         var result = Assert.IsType<OkObjectResult>(controller.Login(new LoginRequest
         {
@@ -112,6 +113,53 @@ public class AuthControllerTests
     }
 
     [Fact]
+    public async Task RequestPasswordReset_Admin_ReturnsForbidden()
+    {
+        var result = await CreateController(new FakeAuthService()).RequestPasswordReset(new PasswordResetCodeRequest
+        {
+            Username = "admin",
+            UserType = "admin",
+            Method = "email",
+            Destination = "admin@example.com"
+        });
+
+        Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
+    public async Task RequestPasswordReset_User_UsesPasswordResetService()
+    {
+        var resetService = new FakePasswordResetService();
+        var result = await CreateController(new FakeAuthService(), passwordReset: resetService)
+            .RequestPasswordReset(new PasswordResetCodeRequest
+            {
+                Username = "student",
+                UserType = "User",
+                Method = "email",
+                Destination = "student@example.com"
+            });
+
+        Assert.IsType<OkObjectResult>(result);
+        Assert.Equal("student", resetService.RequestedUsername);
+    }
+
+    [Fact]
+    public async Task ResetPassword_Admin_ReturnsForbidden()
+    {
+        var result = await CreateController(new FakeAuthService()).ResetPassword(new PasswordResetConfirmRequest
+        {
+            Username = "admin",
+            UserType = "admin",
+            Method = "email",
+            Destination = "admin@example.com",
+            Code = "12345678",
+            NewPassword = "new-password"
+        });
+
+        Assert.Equal(403, Assert.IsType<ObjectResult>(result).StatusCode);
+    }
+
+    [Fact]
     public void UpdateProfile_RequiresALearnerSession()
     {
         var service = new FakeAuthService
@@ -171,9 +219,17 @@ public class AuthControllerTests
         Assert.IsType<BadRequestObjectResult>(result);
     }
 
-    private static AuthController CreateController(IAuthService service, bool includeHeader = false)
+    private static AuthController CreateController(
+        IAuthService service,
+        bool includeHeader = false) =>
+        CreateController(service, new FakePasswordResetService(), includeHeader);
+
+    private static AuthController CreateController(
+        IAuthService service,
+        FakePasswordResetService passwordReset,
+        bool includeHeader = false)
     {
-        var controller = new AuthController(service)
+        var controller = new AuthController(service, passwordReset)
         {
             ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
         };
@@ -206,4 +262,18 @@ public class FakeAuthService : IAuthService
     public UserInfo? GetSession(string token) => token == "test-token" ? UserToReturn : null;
     public int RevokeSessions(string userId, string userType) => 0;
     public bool UpdateUserProfile(string token, ProfileUpdateRequest request) => token == "test-token";
+}
+
+public class FakePasswordResetService : IPasswordResetService
+{
+    public string RequestedUsername { get; private set; } = string.Empty;
+
+    public Task RequestCodeAsync(PasswordResetCodeRequest request)
+    {
+        RequestedUsername = request.Username;
+        return Task.CompletedTask;
+    }
+
+    public Task<bool> ResetPasswordAsync(PasswordResetConfirmRequest request) =>
+        Task.FromResult(true);
 }

@@ -7,6 +7,7 @@ import { LanguageSwitcher, useLanguage } from '../../shared/i18n/LanguageContext
 import { normalizeRole } from '../../shared/lib/roles';
 import { AuthBrandPanel } from './components/AuthBrandPanel';
 import { AuthForm } from './components/AuthForm';
+import { PasswordResetForm } from './components/PasswordResetForm';
 
 const labels = { user: 'User', teacher: 'Teacher', admin: 'Admin' };
 
@@ -19,6 +20,8 @@ export function AuthPage({ mode, role: fixedRole }) {
   const [form, setForm] = useState({});
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPasswordReset, setShowPasswordReset] = useState(false);
+  const [status, setStatus] = useState('');
   const authPanelRef = useRef(null);
   const { signIn } = useAuth();
   const navigate = useNavigate();
@@ -34,7 +37,7 @@ export function AuthPage({ mode, role: fixedRole }) {
       ease: 'outCubic',
     });
     return () => entrance.revert();
-  }, [mode, role]);
+  }, [mode, role, showPasswordReset]);
 
   function update(event) {
     setForm({ ...form, [event.target.name]: event.target.value });
@@ -43,6 +46,7 @@ export function AuthPage({ mode, role: fixedRole }) {
   async function submit(event) {
     event.preventDefault();
     setError('');
+    setStatus('');
     if (isRegister && form.password !== form.confirmPassword) {
       setError(t('Passwords do not match.'));
       return;
@@ -81,16 +85,32 @@ export function AuthPage({ mode, role: fixedRole }) {
           </nav>
           <LanguageSwitcher />
         </div>
-        <AuthForm
-          role={role}
-          title={title}
-          isRegister={isRegister}
-          form={form}
-          error={error}
-          busy={busy}
-          onChange={update}
-          onSubmit={submit}
-        />
+        {showPasswordReset ? (
+          <PasswordResetForm
+            role={role}
+            onBack={() => setShowPasswordReset(false)}
+            onComplete={() => {
+              setShowPasswordReset(false);
+              setStatus('Your password has been updated. You can sign in now.');
+            }}
+          />
+        ) : (
+          <AuthForm
+            role={role}
+            title={title}
+            isRegister={isRegister}
+            form={form}
+            error={error}
+            busy={busy}
+            successMessage={status}
+            onChange={update}
+            onSubmit={submit}
+            onForgotPassword={() => {
+              setStatus('');
+              setShowPasswordReset(true);
+            }}
+          />
+        )}
       </section>
     </main>
   );
